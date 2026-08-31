@@ -98,25 +98,41 @@
   --sidebar-border: oklch(0.31 0.05 20);
   --sidebar-ring: oklch(0.62 0.22 28);
 
+  --gold: oklch(0.82 0.15 88);
+  --gold-deep: oklch(0.62 0.13 72);
+
   --gradient-night: radial-gradient(
-      130% 95% at 50% -15%,
-      oklch(0.42 0.19 25 / 0.55),
+      120% 80% at 50% -15%,
+      oklch(0.42 0.19 25 / 0.5),
       transparent 62%
+    ),
+    radial-gradient(
+      90% 60% at 90% 105%,
+      oklch(0.62 0.13 72 / 0.18),
+      transparent 60%
     ),
     linear-gradient(180deg, oklch(0.15 0.024 20), oklch(0.1 0.018 20));
   --gradient-gold: linear-gradient(
     135deg,
-    oklch(0.66 0.235 28),
-    oklch(0.45 0.19 18)
+    oklch(0.9 0.11 95),
+    oklch(0.78 0.16 85),
+    oklch(0.6 0.13 70)
+  );
+  --gradient-royal: linear-gradient(
+    135deg,
+    oklch(0.62 0.235 27),
+    oklch(0.38 0.16 20) 55%,
+    oklch(0.66 0.14 80)
   );
   --gradient-blood: linear-gradient(
     135deg,
     oklch(0.55 0.22 24),
     oklch(0.3 0.13 16)
   );
-  --shadow-gold: 0 18px 50px -18px oklch(0.6 0.23 26 / 0.6);
+  --shadow-gold: 0 18px 50px -18px oklch(0.78 0.16 85 / 0.55);
   --shadow-card: 0 24px 60px -30px oklch(0 0 0 / 0.9);
 }
+
 
 
 .dark {
