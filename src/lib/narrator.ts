@@ -11,7 +11,7 @@ function pickArabicVoice(): SpeechSynthesisVoice | null {
   const ar = voices.filter((v) => v.lang?.toLowerCase().startsWith("ar"));
   if (ar.length) {
     return (
-      ar.find((v) => /Maged|Tarik|Laila|Hala|Google/i.test(v.name)) ?? ar[0]
+      ar.find((v) => /Maged|Tarik|Laila|Hala|Google/i.test(v.name)) ?? ar[0]!
     );
   }
   return null;
