@@ -1,10 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 const NARRATOR_INSTRUCTIONS =
-  "You are the dramatic game master of a Mafia party game, speaking Arabic. " +
-  "Deep, confident, charismatic male voice. Cinematic and suspenseful, like a " +
-  "movie trailer narrator whispering secrets at night. Clear pronunciation, " +
-  "theatrical pacing with meaningful pauses, warm but commanding. Never robotic.";
+  "Voice: a rugged, gravelly, deep-chested Arabic-speaking man in his late 40s — " +
+  "a real human game master, a heavy smoker's rasp, husky and coarse, never smooth or synthetic. " +
+  "Delivery: intense and thrilling, like a boxing-match announcer mixed with a horror-film narrator. " +
+  "Low chest resonance, growl on strong consonants, breathy whispers on the quiet lines then a sudden " +
+  "powerful surge on the commands. Theatrical, dramatic pauses, slightly slow, absolutely commanding. " +
+  "Fluent, natural Modern Standard Arabic pronunciation. Full of adrenaline and menace.";
+
 
 export const Route = createFileRoute("/api/tts")({
   server: {
@@ -27,9 +30,9 @@ export const Route = createFileRoute("/api/tts")({
           body: JSON.stringify({
             model: "openai/gpt-4o-mini-tts",
             input: text,
-            voice: "onyx",
+            voice: "ash",
             instructions: NARRATOR_INSTRUCTIONS,
-            speed: 1.0,
+            speed: 0.94,
             stream_format: "sse",
             response_format: "pcm",
           }),
