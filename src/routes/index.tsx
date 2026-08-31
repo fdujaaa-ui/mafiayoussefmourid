@@ -356,40 +356,81 @@ function MafiaGame() {
               </p>
             </div>
 
-            <div>
-              <label className="mb-2 flex items-center justify-between text-sm font-semibold">
-                <span>عدد اللاعبين</span>
-                <span className="gold-text text-lg font-bold">
+            <div className="rounded-2xl border border-border bg-muted/25 p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-sm font-bold">عدد اللاعبين</span>
+                <span className="gold-text text-2xl font-extrabold">
                   {playerCount}
                 </span>
-              </label>
-              <input
-                type="range"
-                min={4}
-                max={16}
-                value={playerCount}
-                onChange={(e) => setPlayerCount(Number(e.target.value))}
-                className="w-full accent-primary"
-              />
+              </div>
+              <div className="flex items-center gap-3">
+                <StepBtn
+                  label="−"
+                  onClick={() => setPlayerCount(Math.max(4, playerCount - 1))}
+                />
+                <div className="flex flex-1 items-end justify-center gap-1">
+                  {Array.from({ length: playerCount }, (_, i) => (
+                    <span
+                      key={i}
+                      className="text-xl leading-none sm:text-2xl"
+                      style={{ opacity: 0.55 + (i / playerCount) * 0.45 }}
+                    >
+                      🧍
+                    </span>
+                  ))}
+                </div>
+                <StepBtn
+                  label="+"
+                  onClick={() => setPlayerCount(Math.min(16, playerCount + 1))}
+                />
+              </div>
+              <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+                {Array.from({ length: 13 }, (_, i) => i + 4).map((n) => (
+                  <button
+                    key={n}
+                    onClick={() => setPlayerCount(n)}
+                    className={`h-9 w-9 rounded-lg text-sm font-bold transition active:scale-90 ${
+                      n === playerCount
+                        ? "gold-fill"
+                        : "border border-border bg-secondary/60 text-muted-foreground"
+                    }`}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            <div>
-              <label className="mb-2 flex items-center justify-between text-sm font-semibold">
-                <span>عدد أفراد المافيا</span>
-                <span className="gold-text text-lg font-bold">{mafiaCount}</span>
-              </label>
-              <input
-                type="range"
-                min={1}
-                max={Math.max(1, Math.floor(playerCount / 2) - 1)}
-                value={mafiaCount}
-                onChange={(e) => setMafiaCount(Number(e.target.value))}
-                className="w-full accent-primary"
-              />
-              <p className="mt-1 text-xs text-muted-foreground">
-                المقترح: {suggestedMafia(playerCount)}
-              </p>
+            <div className="rounded-2xl border border-primary/30 bg-primary/5 p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-sm font-bold">عدد أفراد المافيا</span>
+                <span className="text-xs text-muted-foreground">
+                  المقترح: {suggestedMafia(playerCount)}
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {Array.from(
+                  { length: Math.max(1, Math.floor(playerCount / 2) - 1) },
+                  (_, i) => i + 1,
+                ).map((n) => (
+                  <button
+                    key={n}
+                    onClick={() => setMafiaCount(n)}
+                    className={`flex min-w-[74px] flex-1 flex-col items-center gap-1 rounded-xl border px-2 py-3 transition active:scale-95 ${
+                      n === mafiaCount
+                        ? "royal-fill border-transparent"
+                        : "border-border bg-muted/30 text-muted-foreground"
+                    }`}
+                  >
+                    <span className="text-lg leading-none">
+                      {"🔪".repeat(Math.min(n, 3))}
+                    </span>
+                    <span className="text-sm font-extrabold">{n}</span>
+                  </button>
+                ))}
+              </div>
             </div>
+
 
             <div className="grid grid-cols-2 gap-3">
               {[
