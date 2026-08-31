@@ -744,3 +744,14 @@ function PlayerPicker({
     </div>
   );
 }
+
+function StepBtn({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="gold-ring h-10 w-10 shrink-0 rounded-full bg-secondary text-xl font-extrabold leading-none transition active:scale-90"
+    >
+      {label}
+    </button>
+  );
+}
