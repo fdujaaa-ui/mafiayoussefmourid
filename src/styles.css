@@ -164,3 +164,72 @@
     color: var(--color-foreground);
   }
 }
+
+@theme inline {
+  --font-display: var(--font-display);
+}
+
+@layer base {
+  html {
+    font-family: var(--font-display);
+  }
+  body {
+    background-image: var(--gradient-night);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+}
+
+@utility surface-card {
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-card);
+  border-radius: var(--radius);
+}
+
+@utility gold-text {
+  background-image: var(--gradient-gold);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@utility gold-fill {
+  background-image: var(--gradient-gold);
+  color: var(--primary-foreground);
+  box-shadow: var(--shadow-gold);
+}
+
+@utility blood-fill {
+  background-image: var(--gradient-blood);
+  color: var(--accent-foreground);
+}
+
+@keyframes pulse-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 oklch(0.79 0.145 82 / 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 22px oklch(0.79 0.145 82 / 0);
+  }
+}
+
+@utility glow-pulse {
+  animation: pulse-glow 2.2s ease-in-out infinite;
+}
+
+@keyframes float-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@utility float-in {
+  animation: float-in 0.45s ease-out both;
+}
