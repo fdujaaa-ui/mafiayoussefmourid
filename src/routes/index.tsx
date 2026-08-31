@@ -59,6 +59,7 @@ function MafiaGame() {
   const [stepIndex, setStepIndex] = useState(0);
   const [speaking, setSpeaking] = useState(false);
   const [awaitingPick, setAwaitingPick] = useState(false);
+  const [nightPick, setNightPick] = useState<number | null>(null);
   const [mafiaTarget, setMafiaTarget] = useState<number | null>(null);
   const [doctorTarget, setDoctorTarget] = useState<number | null>(null);
   const [detectiveResult, setDetectiveResult] = useState<string | null>(null);
@@ -580,21 +581,13 @@ function MafiaGame() {
             <h2 className="text-center text-xl font-bold">التصويت</h2>
             {!voteResult ? (
               <>
-                <div className="grid grid-cols-2 gap-2">
-                  {alive.map((p) => (
-                    <button
-                      key={p.id}
-                      onClick={() => setVoteTarget(p.id)}
-                      className={`rounded-xl border px-3 py-3 font-semibold active:scale-95 ${
-                        voteTarget === p.id
-                          ? "border-primary bg-secondary"
-                          : "border-border bg-muted/40"
-                      }`}
-                    >
-                      {p.name}
-                    </button>
-                  ))}
-                </div>
+                <PlayerPicker
+                  players={alive}
+                  selected={voteTarget}
+                  onSelect={setVoteTarget}
+                  accent="red"
+                />
+
                 <button
                   onClick={confirmVote}
                   disabled={voteTarget === null}
