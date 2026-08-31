@@ -1,12 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-const NARRATOR_INSTRUCTIONS =
-  "Voice: a rugged, gravelly, deep-chested Arabic-speaking man in his late 40s — " +
-  "a real human game master, a heavy smoker's rasp, husky and coarse, never smooth or synthetic. " +
-  "Delivery: intense and thrilling, like a boxing-match announcer mixed with a horror-film narrator. " +
-  "Low chest resonance, growl on strong consonants, breathy whispers on the quiet lines then a sudden " +
-  "powerful surge on the commands. Theatrical, dramatic pauses, slightly slow, absolutely commanding. " +
-  "Fluent, natural Modern Standard Arabic pronunciation. Full of adrenaline and menace.";
 
 
 export const Route = createFileRoute("/api/tts")({
