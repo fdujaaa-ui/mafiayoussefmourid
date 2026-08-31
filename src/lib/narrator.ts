@@ -176,7 +176,7 @@ export function speak(text: string, opts: SpeakOptions = {}) {
     .then((samples) => {
       if (myGen !== generation) return;
       const buffer = c.createBuffer(1, samples.length, SAMPLE_RATE);
-      buffer.copyToChannel(samples, 0);
+      buffer.copyToChannel(samples as Float32Array<ArrayBuffer>, 0);
       const source = c.createBufferSource();
       source.buffer = buffer;
       source.connect(c.destination);
