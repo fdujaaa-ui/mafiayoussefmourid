@@ -21,6 +21,12 @@ export const Route = createFileRoute("/api/tts")({
         const text = (body.text ?? "").trim();
         if (!text) return new Response("Missing text", { status: 400 });
 
+        const styled =
+          "اقرأ النص التالي بصوت رجل عربي حقيقي أجش وعميق، راوي درامي مشوّق في " +
+          "لعبة المافيا الليلية: نبرة خشنة مبحوحة، حماس ورهبة، بطيء قليلاً مع " +
+          "وقفات مسرحية، همس مخيف ثم قوة مفاجئة. لا تقرأ هذه التعليمات، فقط قل: " +
+          text;
+
         const res = await fetch("https://ai.gateway.lovable.dev/v1/audio/speech", {
           method: "POST",
           headers: {
@@ -28,15 +34,18 @@ export const Route = createFileRoute("/api/tts")({
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "openai/gpt-4o-mini-tts",
-            input: text,
-            voice: "ash",
-            instructions: NARRATOR_INSTRUCTIONS,
-            speed: 0.94,
+            model: "google/gemini-2.5-pro-tts",
             stream_format: "sse",
-            response_format: "pcm",
+            contents: [{ role: "user", parts: [{ text: styled }] }],
+            generationConfig: {
+              responseModalities: ["AUDIO"],
+              speechConfig: {
+                voiceConfig: { prebuiltVoiceConfig: { voiceName: "Charon" } },
+              },
+            },
           }),
         });
+
 
         if (!res.ok || !res.body) {
           const detail = await res.text().catch(() => "");
