@@ -507,20 +507,32 @@ function MafiaGame() {
 
             {awaitingPick && currentStep.action && (
               <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-2">
-                  {alive.map((p) => (
-                    <button
-                      key={p.id}
-                      onClick={() => pick(currentStep, p.id)}
-                      className="rounded-xl border border-border bg-secondary px-3 py-3 font-semibold active:scale-95"
-                    >
-                      {p.name}
-                    </button>
-                  ))}
-                </div>
+                <PlayerPicker
+                  players={alive}
+                  selected={nightPick}
+                  onSelect={setNightPick}
+                  accent={currentStep.action === "mafia" ? "red" : "gold"}
+                />
+                <button
+                  onClick={() => {
+                    if (nightPick === null) return;
+                    const id = nightPick;
+                    setNightPick(null);
+                    pick(currentStep, id);
+                  }}
+                  disabled={nightPick === null}
+                  className={`w-full rounded-xl py-4 text-lg font-extrabold transition active:scale-95 disabled:opacity-40 ${
+                    currentStep.action === "mafia" ? "royal-fill" : "gold-fill"
+                  }`}
+                >
+                  تأكيد الاختيار
+                </button>
                 {currentStep.action === "doctor" && (
                   <button
-                    onClick={() => pick(currentStep, -1)}
+                    onClick={() => {
+                      setNightPick(null);
+                      pick(currentStep, -1);
+                    }}
                     className="w-full rounded-xl border border-border py-3 text-sm text-muted-foreground"
                   >
                     تخطي بلا إنقاذ
@@ -528,6 +540,7 @@ function MafiaGame() {
                 )}
               </div>
             )}
+
 
             {detectiveResult && (
               <p className="rounded-lg bg-secondary p-3 text-sm">
