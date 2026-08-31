@@ -172,22 +172,41 @@ export function speak(text: string, opts: SpeakOptions = {}) {
   }
   if (c.state === "suspended") void c.resume().catch(() => {});
 
+  // Guarantees the game never freezes waiting on the network: if the
+  // cinematic voice has not started within a short window, we speak the
+  // line with the built-in voice instead.
+  let settled = false;
+  const finish = () => {
+    if (settled || myGen !== generation) return;
+    settled = true;
+    onEnd?.();
+  };
+  const watchdog = window.setTimeout(() => {
+    if (settled || myGen !== generation) return;
+    settled = true;
+    browserFallback(text, false, onEnd);
+  }, cache.has(text) ? 1200 : 3500);
+
   fetchAudio(text)
     .then((samples) => {
-      if (myGen !== generation) return;
+      if (myGen !== generation || settled) return;
+      window.clearTimeout(watchdog);
       const buffer = c.createBuffer(1, samples.length, SAMPLE_RATE);
       buffer.copyToChannel(samples as Float32Array<ArrayBuffer>, 0);
       const source = c.createBufferSource();
       source.buffer = buffer;
       source.connect(c.destination);
-      source.onended = () => {
-        if (myGen === generation) onEnd?.();
-      };
+      source.onended = finish;
+      // Safety net in case onended never fires (suspended context, iOS).
+      window.setTimeout(finish, (samples.length / SAMPLE_RATE) * 1000 + 1500);
       activeSources.push(source);
       source.start();
     })
     .catch(() => {
-      if (myGen !== generation) return;
+      if (myGen !== generation || settled) return;
+      settled = true;
+      window.clearTimeout(watchdog);
       browserFallback(text, false, onEnd);
     });
 }
+
