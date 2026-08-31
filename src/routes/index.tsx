@@ -654,3 +654,52 @@ function MafiaGame() {
     </div>
   );
 }
+
+function PlayerPicker({
+  players,
+  selected,
+  onSelect,
+  accent = "gold",
+}: {
+  players: Player[];
+  selected: number | null;
+  onSelect: (id: number) => void;
+  accent?: "gold" | "red";
+}) {
+  return (
+    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+      {players.map((p, i) => {
+        const on = selected === p.id;
+        return (
+          <button
+            key={p.id}
+            onClick={() => onSelect(p.id)}
+            className={`group relative flex flex-col items-center gap-2 rounded-2xl border px-2 py-3 transition-all active:scale-95 ${
+              on
+                ? accent === "red"
+                  ? "border-primary bg-primary/15 shadow-[0_0_0_2px_var(--primary)]"
+                  : "gold-ring bg-[oklch(0.78_0.16_85_/_0.12)]"
+                : "border-border bg-muted/30 hover:border-primary/40"
+            }`}
+          >
+            <span
+              className={`flex h-12 w-12 items-center justify-center rounded-full text-lg font-extrabold ${
+                on
+                  ? accent === "red"
+                    ? "royal-fill"
+                    : "gold-fill"
+                  : "bg-secondary text-foreground/80"
+              }`}
+            >
+              {p.name.trim().charAt(0) || i + 1}
+            </span>
+            <span className="line-clamp-1 text-xs font-bold">{p.name}</span>
+            {on && (
+              <span className="absolute end-1.5 top-1.5 text-xs">✓</span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
