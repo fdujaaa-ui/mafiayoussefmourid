@@ -8,6 +8,7 @@ const cache = new Map<string, Float32Array>();
 const inflight = new Map<string, Promise<Float32Array>>();
 let activeSources: AudioBufferSourceNode[] = [];
 let generation = 0;
+let pendingCompletion: (() => void) | null = null;
 
 const SAMPLE_RATE = 24000;
 
@@ -28,7 +29,7 @@ export function initNarrator() {
   if (c && c.state === "suspended") void c.resume().catch(() => {});
 }
 
-export function stopSpeaking() {
+export function stopSpeaking(completeCurrent = false) {
   generation++;
   for (const s of activeSources) {
     try {
@@ -41,6 +42,9 @@ export function stopSpeaking() {
   if (typeof window !== "undefined" && window.speechSynthesis) {
     window.speechSynthesis.cancel();
   }
+  const completion = pendingCompletion;
+  pendingCompletion = null;
+  if (completeCurrent) completion?.();
 }
 
 function pcmToFloat(bytes: Uint8Array): Float32Array {
@@ -64,11 +68,21 @@ function concat(chunks: Float32Array[]): Float32Array {
   return out;
 }
 
-async function fetchAudio(text: string): Promise<Float32Array> {
+async function fetchAudio(
+  text: string,
+  onChunk?: (chunk: Float32Array) => void,
+): Promise<Float32Array> {
   const cached = cache.get(text);
-  if (cached) return cached;
+  if (cached) {
+    onChunk?.(cached);
+    return cached;
+  }
   const running = inflight.get(text);
-  if (running) return running;
+  if (running) {
+    const samples = await running;
+    onChunk?.(samples);
+    return samples;
+  }
 
   const task = (async () => {
     const res = await fetch("/api/tts", {
@@ -76,7 +90,10 @@ async function fetchAudio(text: string): Promise<Float32Array> {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     });
-    if (!res.ok || !res.body) throw new Error(`tts ${res.status}`);
+    if (!res.ok || !res.body) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(detail || `تعذّر تشغيل صوت المرشد (${res.status})`);
+    }
     const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
     let buffer = "";
     const chunks: Float32Array[] = [];
@@ -104,7 +121,11 @@ async function fetchAudio(text: string): Promise<Float32Array> {
         for (let i = 0; i < bin.length; i++) raw[tail.length + i] = bin.charCodeAt(i);
         const usable = raw.length - (raw.length % 2);
         tail = raw.slice(usable);
-        if (usable > 0) chunks.push(pcmToFloat(raw.subarray(0, usable)));
+        if (usable > 0) {
+          const chunk = pcmToFloat(raw.subarray(0, usable));
+          chunks.push(chunk);
+          onChunk?.(chunk);
+        }
       }
     }
     const merged = concat(chunks);
@@ -151,23 +172,36 @@ function browserFallback(text: string, muted: boolean, onEnd?: () => void) {
   window.speechSynthesis.speak(u);
 }
 
-export type SpeakOptions = { muted?: boolean; onEnd?: () => void };
+export type SpeakOptions = {
+  muted?: boolean;
+  onEnd?: () => void;
+  onError?: (message: string) => void;
+};
 
 export function speak(text: string, opts: SpeakOptions = {}) {
-  const { muted, onEnd } = opts;
+  const { muted, onEnd, onError } = opts;
   stopSpeaking();
   const myGen = generation;
 
+  let completed = false;
+  const complete = () => {
+    if (completed) return;
+    completed = true;
+    if (pendingCompletion === complete) pendingCompletion = null;
+    onEnd?.();
+  };
+  pendingCompletion = complete;
+
   if (muted) {
     window.setTimeout(() => {
-      if (myGen === generation) onEnd?.();
+      if (myGen === generation) complete();
     }, Math.min(4000, 400 + text.length * 55));
     return;
   }
 
   const c = getCtx();
   if (!c) {
-    browserFallback(text, false, onEnd);
+    browserFallback(text, false, complete);
     return;
   }
   if (c.state === "suspended") void c.resume().catch(() => {});
@@ -175,38 +209,65 @@ export function speak(text: string, opts: SpeakOptions = {}) {
   // Guarantees the game never freezes waiting on the network: if the
   // cinematic voice has not started within a short window, we speak the
   // line with the built-in voice instead.
-  let settled = false;
+  let started = false;
+  let streamFinished = false;
+  let scheduled = 0;
+  let playhead = 0;
   const finish = () => {
-    if (settled || myGen !== generation) return;
-    settled = true;
-    onEnd?.();
+    if (myGen !== generation || !streamFinished || scheduled > 0) return;
+    complete();
   };
   const watchdog = window.setTimeout(() => {
-    if (settled || myGen !== generation) return;
-    settled = true;
-    browserFallback(text, false, onEnd);
+    if (started || myGen !== generation || completed) return;
+    started = true;
+    onError?.("تأخر الصوت السينمائي، تم تشغيل الصوت الاحتياطي فوراً.");
+    browserFallback(text, false, complete);
   }, cache.has(text) ? 1200 : 3500);
 
-  fetchAudio(text)
-    .then((samples) => {
-      if (myGen !== generation || settled) return;
+  const schedule = (samples: Float32Array) => {
+    if (myGen !== generation || completed || !samples.length) return;
+    if (!started) {
+      started = true;
       window.clearTimeout(watchdog);
-      const buffer = c.createBuffer(1, samples.length, SAMPLE_RATE);
-      buffer.copyToChannel(samples as Float32Array<ArrayBuffer>, 0);
-      const source = c.createBufferSource();
-      source.buffer = buffer;
-      source.connect(c.destination);
-      source.onended = finish;
-      // Safety net in case onended never fires (suspended context, iOS).
-      window.setTimeout(finish, (samples.length / SAMPLE_RATE) * 1000 + 1500);
-      activeSources.push(source);
-      source.start();
+    }
+    const buffer = c.createBuffer(1, samples.length, SAMPLE_RATE);
+    buffer.copyToChannel(samples as Float32Array<ArrayBuffer>, 0);
+    const source = c.createBufferSource();
+    source.buffer = buffer;
+    source.connect(c.destination);
+    scheduled++;
+    source.onended = () => {
+      scheduled--;
+      activeSources = activeSources.filter((item) => item !== source);
+      finish();
+    };
+    playhead = playhead === 0 ? c.currentTime + 0.05 : Math.max(playhead, c.currentTime);
+    source.start(playhead);
+    playhead += buffer.duration;
+    activeSources.push(source);
+  };
+
+  fetchAudio(text, schedule)
+    .then(() => {
+      if (myGen !== generation || completed) return;
+      streamFinished = true;
+      finish();
+      if (scheduled > 0) {
+        window.setTimeout(complete, Math.max(1000, (playhead - c.currentTime) * 1000 + 1200));
+      }
     })
-    .catch(() => {
-      if (myGen !== generation || settled) return;
-      settled = true;
+    .catch((error: unknown) => {
+      if (myGen !== generation || completed) return;
       window.clearTimeout(watchdog);
-      browserFallback(text, false, onEnd);
+      const message = error instanceof Error ? error.message : "تعذّر تشغيل صوت المرشد.";
+      onError?.(message);
+      if (!started) {
+        started = true;
+        browserFallback(text, false, complete);
+      } else {
+        streamFinished = true;
+        finish();
+      }
     });
 }
 
