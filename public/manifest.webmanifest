@@ -1,0 +1,17 @@
+{
+  "name": "لعبة المافيا",
+  "short_name": "المافيا",
+  "description": "مدير لعبة المافيا مع راوٍ صوتي عربي درامي",
+  "lang": "ar",
+  "dir": "rtl",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#150406",
+  "theme_color": "#7f1020",
+  "icons": [
+    { "src": "/app-icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/app-icon.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

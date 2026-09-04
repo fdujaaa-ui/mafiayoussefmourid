@@ -199,12 +199,23 @@ export function speak(text: string, opts: SpeakOptions = {}) {
     return;
   }
 
+  // No internet: skip the cloud voice entirely unless the line is cached.
+  if (
+    typeof navigator !== "undefined" &&
+    navigator.onLine === false &&
+    !cache.has(text)
+  ) {
+    browserFallback(text, false, complete);
+    return;
+  }
+
   const c = getCtx();
   if (!c) {
     browserFallback(text, false, complete);
     return;
   }
   if (c.state === "suspended") void c.resume().catch(() => {});
+
 
   // Guarantees the game never freezes waiting on the network: if the
   // cinematic voice has not started within a short window, we speak the
