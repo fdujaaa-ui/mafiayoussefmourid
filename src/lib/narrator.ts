@@ -11,6 +11,10 @@ let generation = 0;
 let pendingCompletion: (() => void) | null = null;
 
 const SAMPLE_RATE = 24000;
+// Gemini sends very small PCM packets. Scheduling each packet as its own audio
+// node exposes normal network jitter as audible cuts, so packets are grouped
+// into short, smooth blocks before they reach the player.
+const STREAM_BLOCK_SAMPLES = Math.round(SAMPLE_RATE * 0.16);
 
 function getCtx(): AudioContext | null {
   if (typeof window === "undefined") return null;
@@ -97,7 +101,16 @@ async function fetchAudio(
     const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
     let buffer = "";
     const chunks: Float32Array[] = [];
+    let playbackChunks: Float32Array[] = [];
+    let playbackSamples = 0;
     let tail = new Uint8Array(0);
+    let receivedDone = false;
+    const flushPlayback = () => {
+      if (!playbackSamples) return;
+      onChunk?.(concat(playbackChunks));
+      playbackChunks = [];
+      playbackSamples = 0;
+    };
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -114,6 +127,10 @@ async function fetchAudio(
         } catch {
           continue;
         }
+        if (payload.type === "speech.audio.done") {
+          receivedDone = true;
+          continue;
+        }
         if (payload.type !== "speech.audio.delta" || !payload.audio) continue;
         const bin = atob(payload.audio);
         const raw = new Uint8Array(tail.length + bin.length);
@@ -124,12 +141,16 @@ async function fetchAudio(
         if (usable > 0) {
           const chunk = pcmToFloat(raw.subarray(0, usable));
           chunks.push(chunk);
-          onChunk?.(chunk);
+          playbackChunks.push(chunk);
+          playbackSamples += chunk.length;
+          if (playbackSamples >= STREAM_BLOCK_SAMPLES) flushPlayback();
         }
       }
     }
+    flushPlayback();
     const merged = concat(chunks);
     if (!merged.length) throw new Error("empty audio");
+    if (!receivedDone) throw new Error("انقطع اتصال الصوت قبل اكتمال الجملة.");
     cache.set(text, merged);
     return merged;
   })();
@@ -185,7 +206,7 @@ export function speak(text: string, opts: SpeakOptions = {}) {
 
   let completed = false;
   const complete = () => {
-    if (completed) return;
+    if (completed || myGen !== generation) return;
     completed = true;
     if (pendingCompletion === complete) pendingCompletion = null;
     onEnd?.();
