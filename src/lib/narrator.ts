@@ -1,20 +1,22 @@
 // Cinematic Arabic narrator powered by Lovable AI text-to-speech.
-// Streams PCM audio so playback starts almost instantly, caches every line
-// so repeated phrases play with zero delay, and falls back to the built-in
-// browser voice if the network is unavailable.
+// Charon audio is cached permanently in IndexedDB so previously generated
+// lines continue working even after Lovable AI credits run out or the device
+// goes offline. No browser voice fallback is used.
 
 let ctx: AudioContext | null = null;
 const cache = new Map<string, Float32Array>();
 const inflight = new Map<string, Promise<Float32Array>>();
+const persistentCache = new Map<string, Float32Array>();
+
 let activeSources: AudioBufferSourceNode[] = [];
 let generation = 0;
 let pendingCompletion: (() => void) | null = null;
 
 const SAMPLE_RATE = 24000;
-// Gemini sends very small PCM packets. Scheduling each packet as its own audio
-// node exposes normal network jitter as audible cuts, so packets are grouped
-// into short, smooth blocks before they reach the player.
 const STREAM_BLOCK_SAMPLES = Math.round(SAMPLE_RATE * 0.16);
+
+const DB_NAME = "mafia-narrator";
+const DB_STORE = "audio";
 
 class NarratorRequestError extends Error {
   constructor(message: string, readonly status: number) {
@@ -24,57 +26,161 @@ class NarratorRequestError extends Error {
 
 function getCtx(): AudioContext | null {
   if (typeof window === "undefined") return null;
+
   const Ctor =
     window.AudioContext ??
     (window as unknown as { webkitAudioContext?: typeof AudioContext })
       .webkitAudioContext;
+
   if (!Ctor) return null;
-  if (!ctx) ctx = new Ctor({ sampleRate: SAMPLE_RATE });
+
+  if (!ctx) {
+    ctx = new Ctor({ sampleRate: SAMPLE_RATE });
+  }
+
   return ctx;
+}
+
+/** Open the permanent local audio database. */
+async function openAudioDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+
+    request.onupgradeneeded = () => {
+      const database = request.result;
+
+      if (!database.objectStoreNames.contains(DB_STORE)) {
+        database.createObjectStore(DB_STORE);
+      }
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+/** Save Charon audio permanently on this device/browser. */
+async function saveAudio(text: string, samples: Float32Array) {
+  if (typeof window === "undefined") return;
+
+  try {
+    const db = await openAudioDB();
+
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, "readwrite");
+      tx.objectStore(DB_STORE).put(samples, text);
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+
+    db.close();
+    persistentCache.set(text, samples);
+  } catch {
+    // The in-memory cache still works if IndexedDB is unavailable.
+  }
+}
+
+/** Load previously generated Charon audio from the device. */
+async function loadAudio(text: string): Promise<Float32Array | null> {
+  if (cache.has(text)) {
+    return cache.get(text)!;
+  }
+
+  if (persistentCache.has(text)) {
+    return persistentCache.get(text)!;
+  }
+
+  if (typeof window === "undefined") return null;
+
+  try {
+    const db = await openAudioDB();
+
+    const result = await new Promise<Float32Array | null>((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, "readonly");
+      const request = tx.objectStore(DB_STORE).get(text);
+
+      request.onsuccess = () => {
+        const value = request.result;
+
+        if (value instanceof Float32Array) {
+          resolve(value);
+        } else if (value instanceof ArrayBuffer) {
+          resolve(new Float32Array(value));
+        } else {
+          resolve(null);
+        }
+      };
+
+      request.onerror = () => reject(request.error);
+    });
+
+    db.close();
+
+    if (result) {
+      cache.set(text, result);
+      persistentCache.set(text, result);
+    }
+
+    return result;
+  } catch {
+    return null;
+  }
 }
 
 /** Call from a user gesture so audio is unlocked and warm. */
 export function initNarrator() {
   const c = getCtx();
-  if (c && c.state === "suspended") void c.resume().catch(() => {});
+
+  if (c && c.state === "suspended") {
+    void c.resume().catch(() => {});
+  }
 }
 
 export function stopSpeaking(completeCurrent = false) {
   generation++;
-  for (const s of activeSources) {
+
+  for (const source of activeSources) {
     try {
-      s.stop();
+      source.stop();
     } catch {
       /* ignore */
     }
   }
+
   activeSources = [];
-  if (typeof window !== "undefined" && window.speechSynthesis) {
-    window.speechSynthesis.cancel();
-  }
+
   const completion = pendingCompletion;
   pendingCompletion = null;
-  if (completeCurrent) completion?.();
+
+  if (completeCurrent) {
+    completion?.();
+  }
 }
 
 function pcmToFloat(bytes: Uint8Array): Float32Array {
   const usable = bytes.length - (bytes.length % 2);
   const view = new DataView(bytes.buffer, bytes.byteOffset, usable);
   const out = new Float32Array(usable / 2);
+
   for (let i = 0; i < out.length; i++) {
     out[i] = view.getInt16(i * 2, true) / 32768;
   }
+
   return out;
 }
 
 function concat(chunks: Float32Array[]): Float32Array {
   const total = chunks.reduce((n, c) => n + c.length, 0);
   const out = new Float32Array(total);
+
   let off = 0;
-  for (const c of chunks) {
-    out.set(c, off);
-    off += c.length;
+
+  for (const chunk of chunks) {
+    out.set(chunk, off);
+    off += chunk.length;
   }
+
   return out;
 }
 
@@ -82,89 +188,171 @@ async function fetchAudio(
   text: string,
   onChunk?: (chunk: Float32Array) => void,
 ): Promise<Float32Array> {
-  const cached = cache.get(text);
-  if (cached) {
-    onChunk?.(cached);
-    return cached;
+  // 1. Fast memory cache.
+  const memoryCached = cache.get(text);
+
+  if (memoryCached) {
+    onChunk?.(memoryCached);
+    return memoryCached;
   }
+
+  // 2. Permanent device cache.
+  const localCached = await loadAudio(text);
+
+  if (localCached) {
+    onChunk?.(localCached);
+    return localCached;
+  }
+
+  // 3. Avoid generating the same sentence twice simultaneously.
   const running = inflight.get(text);
+
   if (running) {
     const samples = await running;
     onChunk?.(samples);
     return samples;
   }
 
+  // 4. Generate Charon audio from Lovable AI.
   const task = (async () => {
     const res = await fetch("/api/tts", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify({ text }),
     });
+
     if (!res.ok || !res.body) {
       const detail = await res.text().catch(() => "");
+
       throw new NarratorRequestError(
         detail || `تعذّر تشغيل صوت المرشد (${res.status})`,
         res.status,
       );
     }
-    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+
+    const reader = res.body
+      .pipeThrough(new TextDecoderStream())
+      .getReader();
+
     let buffer = "";
     const chunks: Float32Array[] = [];
     let playbackChunks: Float32Array[] = [];
     let playbackSamples = 0;
     let tail = new Uint8Array(0);
     let receivedDone = false;
+
     const flushPlayback = () => {
       if (!playbackSamples) return;
+
       onChunk?.(concat(playbackChunks));
+
       playbackChunks = [];
       playbackSamples = 0;
     };
+
     for (;;) {
       const { value, done } = await reader.read();
+
       if (done) break;
+
       buffer += value;
+
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
+
       for (const line of lines) {
         if (!line.startsWith("data:")) continue;
+
         const payloadText = line.slice(5).trim();
-        if (!payloadText || payloadText === "[DONE]") continue;
-        let payload: { type?: string; audio?: string };
+
+        if (!payloadText || payloadText === "[DONE]") {
+          continue;
+        }
+
+        let payload: {
+          type?: string;
+          audio?: string;
+        };
+
         try {
           payload = JSON.parse(payloadText);
         } catch {
           continue;
         }
+
         if (payload.type === "speech.audio.done") {
           receivedDone = true;
           continue;
         }
-        if (payload.type !== "speech.audio.delta" || !payload.audio) continue;
+
+        if (
+          payload.type !== "speech.audio.delta" ||
+          !payload.audio
+        ) {
+          continue;
+        }
+
         const bin = atob(payload.audio);
-        const raw = new Uint8Array(tail.length + bin.length);
+
+        const raw = new Uint8Array(
+          tail.length + bin.length,
+        );
+
         raw.set(tail);
-        for (let i = 0; i < bin.length; i++) raw[tail.length + i] = bin.charCodeAt(i);
+
+        for (let i = 0; i < bin.length; i++) {
+          raw[tail.length + i] = bin.charCodeAt(i);
+        }
+
         const usable = raw.length - (raw.length % 2);
+
         tail = raw.slice(usable);
+
         if (usable > 0) {
-          const chunk = pcmToFloat(raw.subarray(0, usable));
+          const chunk = pcmToFloat(
+            raw.subarray(0, usable),
+          );
+
           chunks.push(chunk);
+
           playbackChunks.push(chunk);
           playbackSamples += chunk.length;
-          if (playbackSamples >= STREAM_BLOCK_SAMPLES) flushPlayback();
+
+          if (
+            playbackSamples >=
+            STREAM_BLOCK_SAMPLES
+          ) {
+            flushPlayback();
+          }
         }
       }
     }
+
     flushPlayback();
+
     const merged = concat(chunks);
-    if (!merged.length) throw new Error("empty audio");
-    if (!receivedDone) throw new Error("انقطع اتصال الصوت قبل اكتمال الجملة.");
+
+    if (!merged.length) {
+      throw new Error("empty audio");
+    }
+
+    if (!receivedDone) {
+      throw new Error(
+        "انقطع اتصال الصوت قبل اكتمال الجملة.",
+      );
+    }
+
+    // Save permanently on the device.
     cache.set(text, merged);
+    await saveAudio(text, merged);
+
     return merged;
   })();
 
   inflight.set(text, task);
+
   try {
     return await task;
   } finally {
@@ -172,34 +360,26 @@ async function fetchAudio(
   }
 }
 
-/** Warm the cache in the background so the next line plays instantly. */
-export function prefetch(text: string) {
-  if (!text || cache.has(text)) return;
-  void fetchAudio(text).catch(() => {});
+/**
+ * Generate and permanently save a line before it is needed.
+ * This is used for player names and important game phrases.
+ */
+export async function prepareVoice(text: string): Promise<boolean> {
+  if (!text.trim()) return false;
+
+  try {
+    await fetchAudio(text.trim());
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-function browserFallback(text: string, muted: boolean, onEnd?: () => void) {
-  if (typeof window === "undefined" || !window.speechSynthesis || muted) {
-    window.setTimeout(() => onEnd?.(), Math.min(4500, 500 + text.length * 60));
-    return;
-  }
-  const u = new SpeechSynthesisUtterance(text);
-  const arabic = window.speechSynthesis
-    .getVoices()
-    .find((v) => v.lang?.toLowerCase().startsWith("ar"));
-  if (arabic) u.voice = arabic;
-  u.lang = arabic?.lang ?? "ar-SA";
-  u.rate = 0.95;
-  let done = false;
-  const finish = () => {
-    if (done) return;
-    done = true;
-    onEnd?.();
-  };
-  u.onend = finish;
-  u.onerror = finish;
-  window.setTimeout(finish, 2500 + text.length * 130);
-  window.speechSynthesis.speak(u);
+/** Warm the cache in the background. */
+export function prefetch(text: string) {
+  if (!text.trim()) return;
+
+  void fetchAudio(text.trim()).catch(() => {});
 }
 
 export type SpeakOptions = {
@@ -208,112 +388,187 @@ export type SpeakOptions = {
   onError?: (message: string) => void;
 };
 
-export function speak(text: string, opts: SpeakOptions = {}) {
-  const { muted, onEnd, onError } = opts;
+export function speak(
+  text: string,
+  opts: SpeakOptions = {},
+) {
+  const {
+    muted,
+    onEnd,
+    onError,
+  } = opts;
+
   stopSpeaking();
+
   const myGen = generation;
 
   let completed = false;
+
   const complete = () => {
-    if (completed || myGen !== generation) return;
+    if (
+      completed ||
+      myGen !== generation
+    ) {
+      return;
+    }
+
     completed = true;
-    if (pendingCompletion === complete) pendingCompletion = null;
+
+    if (
+      pendingCompletion === complete
+    ) {
+      pendingCompletion = null;
+    }
+
     onEnd?.();
   };
+
   pendingCompletion = complete;
 
   if (muted) {
     window.setTimeout(() => {
-      if (myGen === generation) complete();
+      if (myGen === generation) {
+        complete();
+      }
     }, Math.min(4000, 400 + text.length * 55));
-    return;
-  }
 
-  // No internet: skip the cloud voice entirely unless the line is cached.
-  if (
-    typeof navigator !== "undefined" &&
-    navigator.onLine === false &&
-    !cache.has(text)
-  ) {
-    browserFallback(text, false, complete);
     return;
   }
 
   const c = getCtx();
+
   if (!c) {
-    browserFallback(text, false, complete);
+    onError?.(
+      "تعذّر تشغيل الصوت على هذا الجهاز.",
+    );
+    complete();
     return;
   }
-  if (c.state === "suspended") void c.resume().catch(() => {});
 
+  if (c.state === "suspended") {
+    void c.resume().catch(() => {});
+  }
 
-  // Guarantees the game never freezes waiting on the network: if the
-  // cinematic voice has not started within a short window, we speak the
-  // line with the built-in voice instead.
   let started = false;
   let streamFinished = false;
   let scheduled = 0;
   let playhead = 0;
+
   const finish = () => {
-    if (myGen !== generation || !streamFinished || scheduled > 0) return;
+    if (
+      myGen !== generation ||
+      !streamFinished ||
+      scheduled > 0
+    ) {
+      return;
+    }
+
     complete();
   };
-  const watchdog = window.setTimeout(() => {
-    if (started || myGen !== generation || completed) return;
-    started = true;
-    onError?.("تأخر الصوت السينمائي، تم تشغيل الصوت الاحتياطي فوراً.");
-    browserFallback(text, false, complete);
-  }, cache.has(text) ? 1200 : 3500);
 
-  const schedule = (samples: Float32Array) => {
-    if (myGen !== generation || completed || !samples.length) return;
-    if (!started) {
-      started = true;
-      window.clearTimeout(watchdog);
+  const schedule = (
+    samples: Float32Array,
+  ) => {
+    if (
+      myGen !== generation ||
+      completed ||
+      !samples.length
+    ) {
+      return;
     }
-    const buffer = c.createBuffer(1, samples.length, SAMPLE_RATE);
-    buffer.copyToChannel(samples as Float32Array<ArrayBuffer>, 0);
-    const source = c.createBufferSource();
+
+    started = true;
+
+    const buffer = c.createBuffer(
+      1,
+      samples.length,
+      SAMPLE_RATE,
+    );
+
+    buffer.copyToChannel(
+      samples as Float32Array<ArrayBuffer>,
+      0,
+    );
+
+    const source =
+      c.createBufferSource();
+
     source.buffer = buffer;
     source.connect(c.destination);
+
     scheduled++;
+
     source.onended = () => {
       scheduled--;
-      activeSources = activeSources.filter((item) => item !== source);
+
+      activeSources =
+        activeSources.filter(
+          (item) => item !== source,
+        );
+
       finish();
     };
-    playhead = playhead === 0 ? c.currentTime + 0.05 : Math.max(playhead, c.currentTime);
+
+    playhead =
+      playhead === 0
+        ? c.currentTime + 0.05
+        : Math.max(
+            playhead,
+            c.currentTime,
+          );
+
     source.start(playhead);
+
     playhead += buffer.duration;
+
     activeSources.push(source);
   };
 
   fetchAudio(text, schedule)
     .then(() => {
-      if (myGen !== generation || completed) return;
+      if (
+        myGen !== generation ||
+        completed
+      ) {
+        return;
+      }
+
       streamFinished = true;
+
       finish();
+
       if (scheduled > 0) {
-        window.setTimeout(complete, Math.max(1000, (playhead - c.currentTime) * 1000 + 1200));
+        window.setTimeout(
+          complete,
+          Math.max(
+            1000,
+            (playhead - c.currentTime) *
+              1000 +
+              1200,
+          ),
+        );
       }
     })
     .catch((error: unknown) => {
-      if (myGen !== generation || completed) return;
-      window.clearTimeout(watchdog);
-      const message = error instanceof Error ? error.message : "تعذّر تشغيل صوت المرشد.";
-      onError?.(message);
-      // Credit and workspace-policy failures are terminal. Do not replace the
-      // requested cinematic voice with a noticeably different browser voice.
       if (
-        error instanceof NarratorRequestError &&
-        (error.status === 402 || error.status === 403)
+        myGen !== generation ||
+        completed
       ) {
-        complete();
         return;
       }
+
+      const message =
+        error instanceof Error
+          ? error.message
+          : "تعذّر تشغيل صوت المرشد.";
+
+      onError?.(message);
+
+      // IMPORTANT:
+      // Never use the iPhone/browser voice as a replacement.
+      // If Charon cannot be generated, simply report the error.
       if (!started) {
-        started = true;
-        browserFallback(text, false, complete);
+        complete();
       } else {
         streamFinished = true;
         finish();
