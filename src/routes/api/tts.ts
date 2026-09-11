@@ -1,7 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-
-
 export const Route = createFileRoute("/api/tts")({
   server: {
     handlers: {
@@ -23,11 +21,11 @@ export const Route = createFileRoute("/api/tts")({
         const res = await fetch("https://ai.gateway.lovable.dev/v1/audio/speech", {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${apiKey}`,
+            "Lovable-API-Key": apiKey,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "google/gemini-2.5-pro-tts",
+            model: "google/gemini-2.5-flash-tts",
             stream_format: "sse",
             contents: [{ role: "user", parts: [{ text: styled }] }],
             generationConfig: {
@@ -42,13 +40,24 @@ export const Route = createFileRoute("/api/tts")({
 
         if (!res.ok || !res.body) {
           const detail = await res.text().catch(() => "");
-          return new Response(detail || "TTS failed", { status: res.status });
+          let message = detail || "تعذّر تشغيل صوت الراوي.";
+          if (res.status === 402) {
+            message = "رصيد الصوت غير كافٍ الآن. أضف رصيداً من إعدادات Lovable ليعود صوت Charon الدرامي.";
+          } else if (res.status === 403) {
+            message = "الصوت الذكي متوقف في إعدادات مساحة العمل. فعّله ليعود صوت Charon الدرامي.";
+          } else if (res.status === 429) {
+            message = "الصوت مشغول مؤقتاً. انتظر قليلاً ثم أعد المحاولة.";
+          }
+          return new Response(message, {
+            status: res.status,
+            headers: { "Content-Type": "text/plain; charset=utf-8" },
+          });
         }
 
         return new Response(res.body, {
           headers: {
             "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-store",
           },
         });
       },

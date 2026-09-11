@@ -16,6 +16,12 @@ const SAMPLE_RATE = 24000;
 // into short, smooth blocks before they reach the player.
 const STREAM_BLOCK_SAMPLES = Math.round(SAMPLE_RATE * 0.16);
 
+class NarratorRequestError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
 function getCtx(): AudioContext | null {
   if (typeof window === "undefined") return null;
   const Ctor =
@@ -96,7 +102,10 @@ async function fetchAudio(
     });
     if (!res.ok || !res.body) {
       const detail = await res.text().catch(() => "");
-      throw new Error(detail || `تعذّر تشغيل صوت المرشد (${res.status})`);
+      throw new NarratorRequestError(
+        detail || `تعذّر تشغيل صوت المرشد (${res.status})`,
+        res.status,
+      );
     }
     const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
     let buffer = "";
@@ -293,6 +302,15 @@ export function speak(text: string, opts: SpeakOptions = {}) {
       window.clearTimeout(watchdog);
       const message = error instanceof Error ? error.message : "تعذّر تشغيل صوت المرشد.";
       onError?.(message);
+      // Credit and workspace-policy failures are terminal. Do not replace the
+      // requested cinematic voice with a noticeably different browser voice.
+      if (
+        error instanceof NarratorRequestError &&
+        (error.status === 402 || error.status === 403)
+      ) {
+        complete();
+        return;
+      }
       if (!started) {
         started = true;
         browserFallback(text, false, complete);

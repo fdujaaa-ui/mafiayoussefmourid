@@ -9,7 +9,7 @@ import {
   type Player,
   type RoleId,
 } from "@/lib/mafia";
-import { initNarrator, prefetch, speak, stopSpeaking } from "@/lib/narrator";
+import { initNarrator, speak, stopSpeaking } from "@/lib/narrator";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -201,20 +201,6 @@ function MafiaGame() {
     },
     [],
   );
-
-  // Warm the next lines so the narrator never lags behind the game.
-  useEffect(() => {
-    if (muted) return;
-    if (phase === "reveal") {
-      nightSteps.forEach((s) => prefetch(s.text));
-    } else if (phase === "night") {
-      nightSteps.slice(stepIndex + 1, stepIndex + 4).forEach((s) => prefetch(s.text));
-      prefetch("نعم، هذا الشخص من المافيا.");
-      prefetch("لا، هذا الشخص بريء.");
-      prefetch("حان وقت التصويت. اختاروا من تشكّون أنه من المافيا.");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, stepIndex, muted]);
 
   useEffect(() => {
     if (phase !== "night") return;
