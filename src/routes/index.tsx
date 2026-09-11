@@ -9,7 +9,12 @@ import {
   type Player,
   type RoleId,
 } from "@/lib/mafia";
-import { initNarrator, speak, stopSpeaking } from "@/lib/narrator";
+import {
+  initNarrator,
+  prepareVoice,
+  speak,
+  stopSpeaking,
+} from "@/lib/narrator";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -77,18 +82,32 @@ function MafiaGame() {
 
   useEffect(() => {
     initNarrator();
+
     return () => {
       stopSpeaking();
-      if (timerRef.current) window.clearTimeout(timerRef.current);
+
+      if (timerRef.current) {
+        window.clearTimeout(timerRef.current);
+      }
     };
   }, []);
 
   useEffect(() => {
     const n = Math.max(4, Math.min(16, playerCount));
+
     setNames((prev) =>
-      Array.from({ length: n }, (_, i) => prev[i] ?? `اللاعب ${i + 1}`),
+      Array.from(
+        { length: n },
+        (_, i) => prev[i] ?? `اللاعب ${i + 1}`,
+      ),
     );
-    setMafiaCount((m) => Math.min(Math.max(1, m), Math.floor(n / 2) - 1 || 1));
+
+    setMafiaCount((m) =>
+      Math.min(
+        Math.max(1, m),
+        Math.floor(n / 2) - 1 || 1,
+      ),
+    );
   }, [playerCount]);
 
   const alive = players.filter((p) => p.alive);
@@ -101,56 +120,95 @@ function MafiaGame() {
         pause: 4500,
       },
       {
-        text: "المافيا، افتحوا أعينكم. تعرّفوا على بعضكم، ثم اختاروا ضحيتكم.",
+        text:
+          "المافيا، افتحوا أعينكم. تعرّفوا على بعضكم، ثم اختاروا ضحيتكم.",
         pause: 300,
         action: "mafia",
       },
-      { text: "المافيا، أغمضوا أعينكم.", pause: 3500 },
+      {
+        text: "المافيا، أغمضوا أعينكم.",
+        pause: 3500,
+      },
     ];
+
     if (aliveRoles.has("doctor")) {
       steps.push({
-        text: "الطبيب، افتح عينيك. من تريد أن تنقذ هذه الليلة؟",
+        text:
+          "الطبيب، افتح عينيك. من تريد أن تنقذ هذه الليلة؟",
         pause: 300,
         action: "doctor",
       });
-      steps.push({ text: "الطبيب، أغمض عينيك.", pause: 3500 });
+
+      steps.push({
+        text: "الطبيب، أغمض عينيك.",
+        pause: 3500,
+      });
     }
+
     if (aliveRoles.has("detective")) {
       steps.push({
-        text: "المحقق، افتح عينيك. من تشك فيه هذه الليلة؟",
+        text:
+          "المحقق، افتح عينيك. من تشك فيه هذه الليلة؟",
         pause: 300,
         action: "detective",
       });
-      steps.push({ text: "المحقق، أغمض عينيك.", pause: 3500 });
+
+      steps.push({
+        text: "المحقق، أغمض عينيك.",
+        pause: 3500,
+      });
     }
+
     steps.push({
-      text: "انتهى الليل. أشرقت الشمس، افتحوا أعينكم جميعاً.",
+      text:
+        "انتهى الليل. أشرقت الشمس، افتحوا أعينكم جميعاً.",
       pause: 800,
     });
+
     return steps;
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [night, players]);
 
-  const say = useCallback((text: string, then?: () => void, pause = 0) => {
-    setSpeaking(true);
-    setVoiceError(null);
-    retryNarrationRef.current = () => say(text, then, pause);
-    speak(text, {
-      muted: mutedRef.current,
-      onError: (message) => setVoiceError(message),
-      onEnd: () => {
-        if (timerRef.current) window.clearTimeout(timerRef.current);
-        timerRef.current = window.setTimeout(() => {
-          setSpeaking(false);
-          then?.();
-        }, pause);
-      },
-    });
-  }, []);
+  const say = useCallback(
+    (text: string, then?: () => void, pause = 0) => {
+      setSpeaking(true);
+      setVoiceError(null);
+
+      retryNarrationRef.current = () =>
+        say(text, then, pause);
+
+      speak(text, {
+        muted: mutedRef.current,
+
+        onError: (message) =>
+          setVoiceError(message),
+
+        onEnd: () => {
+          if (timerRef.current) {
+            window.clearTimeout(timerRef.current);
+          }
+
+          timerRef.current = window.setTimeout(() => {
+            setSpeaking(false);
+            then?.();
+          }, pause);
+        },
+      });
+    },
+    [],
+  );
 
   /* ---------------- setup ---------------- */
-  function startGame() {
-    const roles = buildRoles(playerCount, mafiaCount, useDoctor, useDetective);
+
+  async function startGame() {
+    const roles = buildRoles(
+      playerCount,
+      mafiaCount,
+      useDoctor,
+      useDetective,
+    );
+
     const list: Player[] = names
       .slice(0, playerCount)
       .map((n, i) => ({
@@ -159,7 +217,36 @@ function MafiaGame() {
         role: roles[i] as RoleId,
         alive: true,
       }));
-    const shuffledPlayers = shuffle(list).map((p, i) => ({ ...p, id: i }));
+
+    const shuffledPlayers = shuffle(list).map(
+      (p, i) => ({
+        ...p,
+        id: i,
+      }),
+    );
+
+    /*
+     * IMPORTANT:
+     * قبل بداية اللعبة، نحضّر صوت Charon لكل اسم.
+     * الصوت يتخزن في IndexedDB داخل الجهاز.
+     * إذا انتهى الـcredit بعد ذلك، الأصوات المحفوظة تبقى تعمل.
+     */
+    initNarrator();
+
+    const uniqueNames = [
+      ...new Set(
+        shuffledPlayers
+          .map((p) => p.name.trim())
+          .filter(Boolean),
+      ),
+    ];
+
+    await Promise.all(
+      uniqueNames.map((name) =>
+        prepareVoice(name),
+      ),
+    );
+
     setPlayers(shuffledPlayers);
     setRevealIndex(0);
     setRevealShown(false);
@@ -167,19 +254,24 @@ function MafiaGame() {
     setNight(1);
     setWinner(null);
     setPhase("reveal");
-    initNarrator();
+
     say(
       `بدأ توزيع الأدوار. يمسك كل لاعب الهاتف وحده، يكشف دوره ويحفظه، ثم يمرر الهاتف. ${shuffledPlayers[0]?.name ?? "اللاعب الأول"}، أمسك الهاتف الآن وتأكد أن لا أحد يرى الشاشة.`,
     );
   }
 
   /* ---------------- reveal ---------------- */
+
   function nextReveal() {
     if (revealIndex + 1 < players.length) {
       const nextIndex = revealIndex + 1;
+
       setRevealIndex(nextIndex);
       setRevealShown(false);
-      say(`${players[nextIndex]?.name ?? "اللاعب التالي"}، أمسك الهاتف الآن وحدك، واستعد لرؤية دورك بسرية.`);
+
+      say(
+        `${players[nextIndex]?.name ?? "اللاعب التالي"}، أمسك الهاتف الآن وحدك، واستعد لرؤية دورك بسرية.`,
+      );
     } else {
       say(
         "اكتمل توزيع الأدوار. ضعوا الهاتف في المنتصف، والجميع يغمض عينيه الآن. تبدأ الليلة الأولى.",
@@ -189,6 +281,7 @@ function MafiaGame() {
   }
 
   /* ---------------- night ---------------- */
+
   const startNight = useCallback(
     (n: number) => {
       setNight(n);
@@ -204,15 +297,22 @@ function MafiaGame() {
 
   useEffect(() => {
     if (phase !== "night") return;
+
     const step = nightSteps[stepIndex];
+
     if (!step) return;
+
     setAwaitingPick(false);
+
     say(
       step.text,
       () => {
         if (step.action) {
           setAwaitingPick(true);
-        } else if (stepIndex + 1 < nightSteps.length) {
+        } else if (
+          stepIndex + 1 <
+          nightSteps.length
+        ) {
           setStepIndex((i) => i + 1);
         } else {
           resolveNight();
@@ -220,11 +320,16 @@ function MafiaGame() {
       },
       step.pause,
     );
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, stepIndex]);
 
-  function pick(step: NightStep, playerId: number) {
+  function pick(
+    step: NightStep,
+    playerId: number,
+  ) {
     setAwaitingPick(false);
+
     if (step.action === "mafia") {
       setMafiaTarget(playerId);
       advance();
@@ -232,81 +337,145 @@ function MafiaGame() {
       setDoctorTarget(playerId);
       advance();
     } else if (step.action === "detective") {
-      const target = players.find((p) => p.id === playerId);
-      if (!target) return;
-      const isMafia = ROLES[target.role].team === "mafia";
-      setDetectiveResult(
-        `${target.name}: ${isMafia ? "من المافيا ⚠️" : "بريء ✅"}`,
+      const target = players.find(
+        (p) => p.id === playerId,
       );
-      say(isMafia ? "نعم، هذا الشخص من المافيا." : "لا، هذا الشخص بريء.", () =>
-        advance(),
+
+      if (!target) return;
+
+      const isMafia =
+        ROLES[target.role].team === "mafia";
+
+      setDetectiveResult(
+        `${target.name}: ${
+          isMafia
+            ? "من المافيا ⚠️"
+            : "بريء ✅"
+        }`,
+      );
+
+      say(
+        isMafia
+          ? "نعم، هذا الشخص من المافيا."
+          : "لا، هذا الشخص بريء.",
+        () => advance(),
       );
     }
   }
 
   function advance() {
     setStepIndex((i) => {
-      if (i + 1 < nightSteps.length) return i + 1;
+      if (i + 1 < nightSteps.length) {
+        return i + 1;
+      }
+
       resolveNight();
       return i;
     });
   }
 
   function resolveNight() {
-    const saved = mafiaTarget !== null && mafiaTarget === doctorTarget;
+    const saved =
+      mafiaTarget !== null &&
+      mafiaTarget === doctorTarget;
+
     let text = "";
     let updated = players;
+
     if (mafiaTarget === null || saved) {
-      const attacked = players.find((p) => p.id === mafiaTarget);
-      text = saved
-        ? `هاجمت المافيا ${attacked?.name ?? "أحد اللاعبين"}، لكن الطبيب أنقذه في اللحظة الأخيرة. لم يمت أحد هذه الليلة.`
-        : "مرّت الليلة بسلام، لم يمت أحد.";
-    } else {
-      const victim = players.find((p) => p.id === mafiaTarget);
-      if (!victim) return;
-      updated = players.map((p) =>
-        p.id === mafiaTarget ? { ...p, alive: false } : p,
+      const attacked = players.find(
+        (p) => p.id === mafiaTarget,
       );
+
+      text = saved
+        ? `هاجمت المافيا ${
+            attacked?.name ?? "أحد اللاعبين"
+          }، لكن الطبيب أنقذه في اللحظة الأخيرة. لم يمت أحد هذه الليلة.`
+        : "مرّت الليلة بسلام، لم يمت أحد هذه الليلة.";
+    } else {
+      const victim = players.find(
+        (p) => p.id === mafiaTarget,
+      );
+
+      if (!victim) return;
+
+      updated = players.map((p) =>
+        p.id === mafiaTarget
+          ? { ...p, alive: false }
+          : p,
+      );
+
       text = `مع شروق الشمس، وُجد ${victim.name} مقتولاً على يد المافيا. خرج من اللعبة، وكان دوره ${ROLES[victim.role].name}.`;
+
       setPlayers(updated);
     }
-    setLog((l) => [...l, `🌙 الليلة ${night}: ${text}`]);
+
+    setLog((l) => [
+      ...l,
+      `🌙 الليلة ${night}: ${text}`,
+    ]);
+
     setMorningText(text);
     setPhase("morning");
+
     const w = checkWinner(updated);
+
     say(text, () => {
       if (w) endGame(w);
     });
   }
 
   /* ---------------- day / vote ---------------- */
+
   function startVote() {
     setVoteTarget(null);
     setVoteResult(null);
     setPhase("vote");
-    say("حان وقت التصويت. اختاروا من تشكّون أنه من المافيا.");
+
+    say(
+      "حان وقت التصويت. اختاروا من تشكّون أنه من المافيا.",
+    );
   }
 
   function confirmVote() {
     if (voteTarget === null) return;
-    const target = players.find((p) => p.id === voteTarget);
-    if (!target) return;
-    const updated = players.map((p) =>
-      p.id === voteTarget ? { ...p, alive: false } : p,
+
+    const target = players.find(
+      (p) => p.id === voteTarget,
     );
+
+    if (!target) return;
+
+    const updated = players.map((p) =>
+      p.id === voteTarget
+        ? { ...p, alive: false }
+        : p,
+    );
+
     setPlayers(updated);
+
     const text = `انتهى تصويت أهل المدينة. تم إخراج ${target.name} من اللعبة، وكان دوره ${ROLES[target.role].name}.`;
+
     setVoteResult(text);
-    setLog((l) => [...l, `☀️ نهار ${night}: ${text}`]);
+
+    setLog((l) => [
+      ...l,
+      `☀️ نهار ${night}: ${text}`,
+    ]);
+
     const w = checkWinner(updated);
+
     say(text, () => {
       if (w) endGame(w);
     });
   }
 
-  function endGame(w: "mafia" | "town") {
+  function endGame(
+    w: "mafia" | "town",
+  ) {
     setWinner(w);
     setPhase("end");
+
     say(
       w === "mafia"
         ? "انتهت اللعبة. المافيا سيطرت على المدينة، الفوز للمافيا!"
@@ -316,34 +485,47 @@ function MafiaGame() {
 
   function resetAll() {
     stopSpeaking();
+
     setPhase("setup");
     setPlayers([]);
     setWinner(null);
     setLog([]);
   }
 
-  const currentStep = nightSteps[stepIndex];
+  const currentStep =
+    nightSteps[stepIndex];
 
   /* ---------------- UI ---------------- */
+
   return (
-    <div dir="rtl" className="min-h-screen px-4 py-6 sm:px-6">
+    <div
+      dir="rtl"
+      className="min-h-screen px-4 py-6 sm:px-6"
+    >
       <header className="mx-auto flex w-full max-w-3xl items-center justify-between gap-3 pb-6">
         <div>
           <h1 className="gold-text text-3xl font-extrabold tracking-tight sm:text-4xl">
             ليلة المافيا
           </h1>
+
           <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
             مدير اللعبة الاحترافي بمرشد صوتي عربي
           </p>
         </div>
+
         <button
           onClick={() => {
-            if (!muted) stopSpeaking(true);
+            if (!muted) {
+              stopSpeaking(true);
+            }
+
             setMuted(!muted);
           }}
           className="surface-card px-3 py-2 text-sm text-foreground transition-transform active:scale-95"
         >
-          {muted ? "🔇 الصوت مغلق" : "🔊 الصوت يعمل"}
+          {muted
+            ? "🔇 الصوت مغلق"
+            : "🔊 الصوت يعمل"}
         </button>
       </header>
 
@@ -351,7 +533,10 @@ function MafiaGame() {
         {phase === "setup" && (
           <section className="surface-card float-in space-y-6 p-5 sm:p-7">
             <div>
-              <h2 className="text-xl font-bold">إعداد اللعبة</h2>
+              <h2 className="text-xl font-bold">
+                إعداد اللعبة
+              </h2>
+
               <p className="mt-1 text-sm text-muted-foreground">
                 هاتف واحد يكفي — التطبيق يوزّع الأدوار ويدير الليل بصوت مسموع.
               </p>
@@ -360,38 +545,70 @@ function MafiaGame() {
             <div className="player-count-panel rounded-2xl border p-4 sm:p-5">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div>
-                  <span className="text-sm font-extrabold">عدد اللاعبين</span>
-                  <p className="mt-1 text-xs text-muted-foreground">من 4 إلى 16 لاعباً</p>
+                  <span className="text-sm font-extrabold">
+                    عدد اللاعبين
+                  </span>
+
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    من 4 إلى 16 لاعباً
+                  </p>
                 </div>
+
                 <span className="emerald-badge flex h-14 min-w-14 items-center justify-center rounded-xl px-3 text-3xl font-black">
                   {playerCount}
                 </span>
               </div>
+
               <div className="grid grid-cols-[44px_1fr_44px] items-center gap-3">
                 <StepBtn
                   label="−"
-                  onClick={() => setPlayerCount(Math.max(4, playerCount - 1))}
+                  onClick={() =>
+                    setPlayerCount(
+                      Math.max(
+                        4,
+                        playerCount - 1,
+                      ),
+                    )
+                  }
                 />
+
                 <div className="grid grid-cols-8 place-items-center gap-1.5 rounded-xl border border-player-accent/30 bg-background/35 p-3 sm:grid-cols-12">
-                  {Array.from({ length: playerCount }, (_, i) => (
-                    <span
-                      key={i}
-                      className="player-dot flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-black"
-                    >
-                      {i + 1}
-                    </span>
-                  ))}
+                  {Array.from(
+                    { length: playerCount },
+                    (_, i) => (
+                      <span
+                        key={i}
+                        className="player-dot flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-black"
+                      >
+                        {i + 1}
+                      </span>
+                    ),
+                  )}
                 </div>
+
                 <StepBtn
                   label="+"
-                  onClick={() => setPlayerCount(Math.min(16, playerCount + 1))}
+                  onClick={() =>
+                    setPlayerCount(
+                      Math.min(
+                        16,
+                        playerCount + 1,
+                      ),
+                    )
+                  }
                 />
               </div>
+
               <div className="mt-4 grid grid-cols-7 gap-1.5 sm:grid-cols-13">
-                {Array.from({ length: 13 }, (_, i) => i + 4).map((n) => (
+                {Array.from(
+                  { length: 13 },
+                  (_, i) => i + 4,
+                ).map((n) => (
                   <button
                     key={n}
-                    onClick={() => setPlayerCount(n)}
+                    onClick={() =>
+                      setPlayerCount(n)
+                    }
                     className={`h-9 rounded-lg text-sm font-bold transition active:scale-90 ${
                       n === playerCount
                         ? "emerald-fill"
@@ -406,19 +623,36 @@ function MafiaGame() {
 
             <div className="rounded-2xl border border-primary/30 bg-primary/5 p-4">
               <div className="mb-3 flex items-center justify-between">
-                <span className="text-sm font-bold">عدد أفراد المافيا</span>
+                <span className="text-sm font-bold">
+                  عدد أفراد المافيا
+                </span>
+
                 <span className="text-xs text-muted-foreground">
-                  المقترح: {suggestedMafia(playerCount)}
+                  المقترح:{" "}
+                  {suggestedMafia(
+                    playerCount,
+                  )}
                 </span>
               </div>
+
               <div className="flex flex-wrap gap-2">
                 {Array.from(
-                  { length: Math.max(1, Math.floor(playerCount / 2) - 1) },
+                  {
+                    length:
+                      Math.max(
+                        1,
+                        Math.floor(
+                          playerCount / 2,
+                        ) - 1,
+                      ),
+                  },
                   (_, i) => i + 1,
                 ).map((n) => (
                   <button
                     key={n}
-                    onClick={() => setMafiaCount(n)}
+                    onClick={() =>
+                      setMafiaCount(n)
+                    }
                     className={`flex min-w-[74px] flex-1 flex-col items-center gap-1 rounded-xl border px-2 py-3 transition active:scale-95 ${
                       n === mafiaCount
                         ? "royal-fill border-transparent"
@@ -426,14 +660,18 @@ function MafiaGame() {
                     }`}
                   >
                     <span className="text-lg leading-none">
-                      {"🔪".repeat(Math.min(n, 3))}
+                      {"🔪".repeat(
+                        Math.min(n, 3),
+                      )}
                     </span>
-                    <span className="text-sm font-extrabold">{n}</span>
+
+                    <span className="text-sm font-extrabold">
+                      {n}
+                    </span>
                   </button>
                 ))}
               </div>
             </div>
-
 
             <div className="grid grid-cols-2 gap-3">
               {[
@@ -447,40 +685,66 @@ function MafiaGame() {
                   set: setUseDetective,
                   role: ROLES.detective,
                 },
-              ].map(({ on, set, role }) => (
-                <button
-                  key={role.id}
-                  onClick={() => set(!on)}
-                  className={`rounded-xl border p-3 text-right transition-all active:scale-95 ${
-                    on
-                      ? "border-primary bg-secondary"
-                      : "border-border bg-muted/40 opacity-60"
-                  }`}
-                >
-                  <div className="text-2xl">{role.emoji}</div>
-                  <div className="mt-1 font-bold">{role.name}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {on ? "مفعّل" : "معطّل"}
-                  </div>
-                </button>
-              ))}
+              ].map(
+                ({
+                  on,
+                  set,
+                  role,
+                }) => (
+                  <button
+                    key={role.id}
+                    onClick={() =>
+                      set(!on)
+                    }
+                    className={`rounded-xl border p-3 text-right transition-all active:scale-95 ${
+                      on
+                        ? "border-primary bg-secondary"
+                        : "border-border bg-muted/40 opacity-60"
+                    }`}
+                  >
+                    <div className="text-2xl">
+                      {role.emoji}
+                    </div>
+
+                    <div className="mt-1 font-bold">
+                      {role.name}
+                    </div>
+
+                    <div className="text-xs text-muted-foreground">
+                      {on
+                        ? "مفعّل"
+                        : "معطّل"}
+                    </div>
+                  </button>
+                ),
+              )}
             </div>
 
             <div>
-              <h3 className="mb-2 text-sm font-semibold">أسماء اللاعبين</h3>
+              <h3 className="mb-2 text-sm font-semibold">
+                أسماء اللاعبين
+              </h3>
+
               <div className="grid grid-cols-2 gap-2">
-                {names.slice(0, playerCount).map((n, i) => (
-                  <input
-                    key={i}
-                    value={n}
-                    onChange={(e) => {
-                      const copy = [...names];
-                      copy[i] = e.target.value;
-                      setNames(copy);
-                    }}
-                    className="rounded-lg border border-border bg-input/40 px-3 py-2 text-sm outline-none focus:border-primary"
-                  />
-                ))}
+                {names
+                  .slice(0, playerCount)
+                  .map((n, i) => (
+                    <input
+                      key={i}
+                      value={n}
+                      onChange={(e) => {
+                        const copy = [
+                          ...names,
+                        ];
+
+                        copy[i] =
+                          e.target.value;
+
+                        setNames(copy);
+                      }}
+                      className="rounded-lg border border-border bg-input/40 px-3 py-2 text-sm outline-none focus:border-primary"
+                    />
+                  ))}
               </div>
             </div>
 
@@ -493,125 +757,220 @@ function MafiaGame() {
           </section>
         )}
 
-        {phase === "reveal" && players[revealIndex] && (
-          <section className="surface-card float-in space-y-5 p-6 text-center">
-            <p className="text-sm text-muted-foreground">
-              اللاعب {revealIndex + 1} من {players.length}
-            </p>
-            <h2 className="text-2xl font-extrabold">
-              {players[revealIndex].name}
-            </h2>
-            {!revealShown ? (
-              <>
-                <p className="text-sm text-muted-foreground">
-                  تأكد أن أحداً لا يشاهد الشاشة، ثم اضغط لكشف دورك.
-                </p>
-                <button
-                  onClick={() => setRevealShown(true)}
-                  className="gold-fill w-full rounded-xl py-4 text-lg font-bold active:scale-95"
-                >
-                  اكشف دوري 👁️
-                </button>
-              </>
-            ) : (
-              <>
-                <div className="rounded-2xl border border-primary/40 bg-secondary p-6">
-                  <div className="text-6xl">
-                    {ROLES[players[revealIndex].role].emoji}
-                  </div>
-                  <div className="gold-text mt-3 text-3xl font-extrabold">
-                    {ROLES[players[revealIndex].role].name}
-                  </div>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    {ROLES[players[revealIndex].role].desc}
+        {phase === "reveal" &&
+          players[revealIndex] && (
+            <section className="surface-card float-in space-y-5 p-6 text-center">
+              <p className="text-sm text-muted-foreground">
+                اللاعب{" "}
+                {revealIndex + 1} من{" "}
+                {players.length}
+              </p>
+
+              <h2 className="text-2xl font-extrabold">
+                {
+                  players[revealIndex]
+                    .name
+                }
+              </h2>
+
+              {!revealShown ? (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    تأكد أن أحداً لا يشاهد الشاشة، ثم اضغط لكشف دورك.
                   </p>
-                </div>
-                <button
-                  onClick={nextReveal}
-                  disabled={speaking}
-                  className="w-full rounded-xl border border-border bg-secondary py-4 font-bold active:scale-95 disabled:opacity-50"
-                >
-                  {revealIndex + 1 < players.length
-                    ? "حفظت دوري — التالي"
-                    : "ابدأ الليلة الأولى 🌙"}
-                </button>
-              </>
-            )}
-          </section>
-        )}
 
-        {phase === "night" && currentStep && (
-          <section className="surface-card float-in space-y-5 p-6 text-center">
-            <div className="text-5xl">🌙</div>
-            <p className="text-xs text-muted-foreground">الليلة {night}</p>
-            <h2 className="text-xl font-bold leading-relaxed">
-              {currentStep.text}
-            </h2>
-            {speaking && (
-              <p className="gold-text text-sm font-bold">…المرشد يتحدث</p>
-            )}
-
-            {awaitingPick && currentStep.action && (
-              <div className="space-y-3">
-                <PlayerPicker
-                  players={alive}
-                  selected={nightPick}
-                  onSelect={setNightPick}
-                  accent={currentStep.action === "mafia" ? "red" : "gold"}
-                />
-                <button
-                  onClick={() => {
-                    if (nightPick === null) return;
-                    const id = nightPick;
-                    setNightPick(null);
-                    pick(currentStep, id);
-                  }}
-                  disabled={nightPick === null}
-                  className={`w-full rounded-xl py-4 text-lg font-extrabold transition active:scale-95 disabled:opacity-40 ${
-                    currentStep.action === "mafia" ? "royal-fill" : "gold-fill"
-                  }`}
-                >
-                  تأكيد الاختيار
-                </button>
-                {currentStep.action === "doctor" && (
                   <button
-                    onClick={() => {
-                      setNightPick(null);
-                      pick(currentStep, -1);
-                    }}
-                    className="w-full rounded-xl border border-border py-3 text-sm text-muted-foreground"
+                    onClick={() =>
+                      setRevealShown(
+                        true,
+                      )
+                    }
+                    className="gold-fill w-full rounded-xl py-4 text-lg font-bold active:scale-95"
                   >
-                    تخطي بلا إنقاذ
+                    اكشف دوري 👁️
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="rounded-2xl border border-primary/40 bg-secondary p-6">
+                    <div className="text-6xl">
+                      {
+                        ROLES[
+                          players[
+                            revealIndex
+                          ].role
+                        ].emoji
+                      }
+                    </div>
+
+                    <div className="gold-text mt-3 text-3xl font-extrabold">
+                      {
+                        ROLES[
+                          players[
+                            revealIndex
+                          ].role
+                        ].name
+                      }
+                    </div>
+
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      {
+                        ROLES[
+                          players[
+                            revealIndex
+                          ].role
+                        ].desc
+                      }
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={
+                      nextReveal
+                    }
+                    disabled={speaking}
+                    className="w-full rounded-xl border border-border bg-secondary py-4 font-bold active:scale-95 disabled:opacity-50"
+                  >
+                    {revealIndex + 1 <
+                    players.length
+                      ? "حفظت دوري — التالي"
+                      : "ابدأ الليلة الأولى 🌙"}
+                  </button>
+                </>
+              )}
+            </section>
+          )}
+
+        {phase === "night" &&
+          currentStep && (
+            <section className="surface-card float-in space-y-5 p-6 text-center">
+              <div className="text-5xl">
+                🌙
+              </div>
+
+              <p className="text-xs text-muted-foreground">
+                الليلة {night}
+              </p>
+
+              <h2 className="text-xl font-bold leading-relaxed">
+                {currentStep.text}
+              </h2>
+
+              {speaking && (
+                <p className="gold-text text-sm font-bold">
+                  …المرشد يتحدث
+                </p>
+              )}
+
+              {awaitingPick &&
+                currentStep.action && (
+                  <div className="space-y-3">
+                    <PlayerPicker
+                      players={alive}
+                      selected={
+                        nightPick
+                      }
+                      onSelect={
+                        setNightPick
+                      }
+                      accent={
+                        currentStep.action ===
+                        "mafia"
+                          ? "red"
+                          : "gold"
+                      }
+                    />
+
+                    <button
+                      onClick={() => {
+                        if (
+                          nightPick ===
+                          null
+                        )
+                          return;
+
+                        const id =
+                          nightPick;
+
+                        setNightPick(
+                          null,
+                        );
+
+                        pick(
+                          currentStep,
+                          id,
+                        );
+                      }}
+                      disabled={
+                        nightPick ===
+                        null
+                      }
+                      className={`w-full rounded-xl py-4 text-lg font-extrabold transition active:scale-95 disabled:opacity-40 ${
+                        currentStep.action ===
+                        "mafia"
+                          ? "royal-fill"
+                          : "gold-fill"
+                      }`}
+                    >
+                      تأكيد الاختيار
+                    </button>
+
+                    {currentStep.action ===
+                      "doctor" && (
+                      <button
+                        onClick={() => {
+                          setNightPick(
+                            null,
+                          );
+
+                          pick(
+                            currentStep,
+                            -1,
+                          );
+                        }}
+                        className="w-full rounded-xl border border-border py-3 text-sm text-muted-foreground"
+                      >
+                        تخطي بلا إنقاذ
+                      </button>
+                    )}
+                  </div>
+                )}
+
+              {detectiveResult && (
+                <p className="rounded-lg bg-secondary p-3 text-sm">
+                  نتيجة التحقيق:{" "}
+                  {detectiveResult}
+                </p>
+              )}
+
+              {!speaking &&
+                !awaitingPick && (
+                  <button
+                    onClick={() =>
+                      advance()
+                    }
+                    className="w-full rounded-xl border border-border bg-secondary py-3 text-sm"
+                  >
+                    تخطي هذه الخطوة
                   </button>
                 )}
-              </div>
-            )}
-
-
-            {detectiveResult && (
-              <p className="rounded-lg bg-secondary p-3 text-sm">
-                نتيجة التحقيق: {detectiveResult}
-              </p>
-            )}
-
-            {!speaking && !awaitingPick && (
-              <button
-                onClick={() => advance()}
-                className="w-full rounded-xl border border-border bg-secondary py-3 text-sm"
-              >
-                تخطي هذه الخطوة
-              </button>
-            )}
-          </section>
-        )}
+            </section>
+          )}
 
         {phase === "morning" && (
           <section className="surface-card float-in space-y-5 p-6 text-center">
-            <div className="text-5xl">☀️</div>
-            <h2 className="text-xl font-bold leading-relaxed">{morningText}</h2>
+            <div className="text-5xl">
+              ☀️
+            </div>
+
+            <h2 className="text-xl font-bold leading-relaxed">
+              {morningText}
+            </h2>
+
             <p className="text-sm text-muted-foreground">
               تناقشوا الآن، ثم صوّتوا على من تشكّون فيه.
             </p>
+
             <button
               onClick={startVote}
               className="blood-fill w-full rounded-xl py-4 text-lg font-bold active:scale-95"
@@ -623,19 +982,31 @@ function MafiaGame() {
 
         {phase === "vote" && (
           <section className="surface-card float-in space-y-4 p-6">
-            <h2 className="text-center text-xl font-bold">التصويت</h2>
+            <h2 className="text-center text-xl font-bold">
+              التصويت
+            </h2>
+
             {!voteResult ? (
               <>
                 <PlayerPicker
                   players={alive}
-                  selected={voteTarget}
-                  onSelect={setVoteTarget}
+                  selected={
+                    voteTarget
+                  }
+                  onSelect={
+                    setVoteTarget
+                  }
                   accent="red"
                 />
 
                 <button
-                  onClick={confirmVote}
-                  disabled={voteTarget === null}
+                  onClick={
+                    confirmVote
+                  }
+                  disabled={
+                    voteTarget ===
+                    null
+                  }
                   className="gold-fill w-full rounded-xl py-4 text-lg font-bold disabled:opacity-40"
                 >
                   تأكيد الإعدام
@@ -643,9 +1014,16 @@ function MafiaGame() {
               </>
             ) : (
               <>
-                <p className="text-center text-lg font-bold">{voteResult}</p>
+                <p className="text-center text-lg font-bold">
+                  {voteResult}
+                </p>
+
                 <button
-                  onClick={() => startNight(night + 1)}
+                  onClick={() =>
+                    startNight(
+                      night + 1,
+                    )
+                  }
                   className="w-full rounded-xl border border-border bg-secondary py-4 font-bold active:scale-95"
                 >
                   الليلة التالية 🌙
@@ -657,10 +1035,18 @@ function MafiaGame() {
 
         {phase === "end" && (
           <section className="surface-card float-in space-y-5 p-6 text-center">
-            <div className="text-6xl">{winner === "mafia" ? "🔪" : "🏆"}</div>
+            <div className="text-6xl">
+              {winner === "mafia"
+                ? "🔪"
+                : "🏆"}
+            </div>
+
             <h2 className="gold-text text-3xl font-extrabold">
-              {winner === "mafia" ? "فوز المافيا!" : "فوز المدينة!"}
+              {winner === "mafia"
+                ? "فوز المافيا!"
+                : "فوز المدينة!"}
             </h2>
+
             <div className="space-y-2 text-right">
               {players.map((p) => (
                 <div
@@ -668,14 +1054,27 @@ function MafiaGame() {
                   className="flex items-center justify-between rounded-lg bg-secondary px-3 py-2 text-sm"
                 >
                   <span>
-                    {ROLES[p.role].emoji} {p.name}
+                    {
+                      ROLES[p.role]
+                        .emoji
+                    }{" "}
+                    {p.name}
                   </span>
+
                   <span className="text-muted-foreground">
-                    {ROLES[p.role].name} — {p.alive ? "حي" : "خارج اللعبة"}
+                    {
+                      ROLES[p.role]
+                        .name
+                    }{" "}
+                    —{" "}
+                    {p.alive
+                      ? "حي"
+                      : "خارج اللعبة"}
                   </span>
                 </div>
               ))}
             </div>
+
             <button
               onClick={resetAll}
               className="gold-fill w-full rounded-xl py-4 text-lg font-bold active:scale-95"
@@ -685,22 +1084,37 @@ function MafiaGame() {
           </section>
         )}
 
-        {log.length > 0 && phase !== "setup" && (
-          <section className="surface-card mt-5 space-y-2 p-4 text-sm">
-            <h3 className="font-bold">سجل الأحداث</h3>
-            {log.map((l, i) => (
-              <p key={i} className="text-muted-foreground">
-                {l}
-              </p>
-            ))}
-          </section>
-        )}
+        {log.length > 0 &&
+          phase !== "setup" && (
+            <section className="surface-card mt-5 space-y-2 p-4 text-sm">
+              <h3 className="font-bold">
+                سجل الأحداث
+              </h3>
+
+              {log.map((l, i) => (
+                <p
+                  key={i}
+                  className="text-muted-foreground"
+                >
+                  {l}
+                </p>
+              ))}
+            </section>
+          )}
 
         {voiceError && !muted && (
-          <aside className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-player-accent/40 bg-player-accent/10 p-3 text-sm" role="alert">
-            <span>{voiceError}</span>
+          <aside
+            className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-player-accent/40 bg-player-accent/10 p-3 text-sm"
+            role="alert"
+          >
+            <span>
+              {voiceError}
+            </span>
+
             <button
-              onClick={() => retryNarrationRef.current?.()}
+              onClick={() =>
+                retryNarrationRef.current?.()
+              }
               className="shrink-0 rounded-md border border-player-accent/50 px-3 py-2 font-bold"
             >
               إعادة المحاولة
@@ -726,11 +1140,15 @@ function PlayerPicker({
   return (
     <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
       {players.map((p, i) => {
-        const on = selected === p.id;
+        const on =
+          selected === p.id;
+
         return (
           <button
             key={p.id}
-            onClick={() => onSelect(p.id)}
+            onClick={() =>
+              onSelect(p.id)
+            }
             className={`group relative flex flex-col items-center gap-2 rounded-2xl border px-2 py-3 transition-all active:scale-95 ${
               on
                 ? accent === "red"
@@ -748,11 +1166,18 @@ function PlayerPicker({
                   : "bg-secondary text-foreground/80"
               }`}
             >
-              {p.name.trim().charAt(0) || i + 1}
+              {p.name.trim().charAt(0) ||
+                i + 1}
             </span>
-            <span className="line-clamp-1 text-xs font-bold">{p.name}</span>
+
+            <span className="line-clamp-1 text-xs font-bold">
+              {p.name}
+            </span>
+
             {on && (
-              <span className="absolute end-1.5 top-1.5 text-xs">✓</span>
+              <span className="absolute end-1.5 top-1.5 text-xs">
+                ✓
+              </span>
             )}
           </button>
         );
@@ -761,7 +1186,13 @@ function PlayerPicker({
   );
 }
 
-function StepBtn({ label, onClick }: { label: string; onClick: () => void }) {
+function StepBtn({
+  label,
+  onClick,
+}: {
+  label: string;
+  onClick: () => void;
+}) {
   return (
     <button
       onClick={onClick}
