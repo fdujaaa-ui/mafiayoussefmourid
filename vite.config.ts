@@ -60,6 +60,16 @@ export default defineConfig({
                 expiration: { maxEntries: 30, maxAgeSeconds: 60 * 60 * 24 * 365 },
               },
             },
+            {
+              urlPattern: ({ url }) =>
+                url.origin === "https://cdnjs.cloudflare.com" ||
+                url.origin === "https://cdn.jsdelivr.net",
+              handler: "CacheFirst",
+              options: {
+                cacheName: "offline-voice-engine",
+                expiration: { maxEntries: 12, maxAgeSeconds: 60 * 60 * 24 * 365 },
+              },
+            },
           ],
         },
       }),
