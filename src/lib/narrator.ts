@@ -51,7 +51,9 @@ export async function prepareOfflineVoice(
   if (!localVoiceReady) {
     localVoiceReady = (async () => {
       const tts = await import("@mintplex-labs/piper-tts-web");
-      const storedVoices = await tts.stored().catch(() => []);
+      const storedVoices: string[] = await tts.stored().catch(
+        () => [] as string[],
+      );
 
       if (!storedVoices.includes(LOCAL_VOICE)) {
         await tts.download(LOCAL_VOICE, (progress) => {
@@ -80,6 +82,7 @@ async function generateLocalAudio(text: string): Promise<Float32Array> {
   if (running) return running;
 
   const task = (async () => {
+    await prepareOfflineVoice();
     const tts = await import("@mintplex-labs/piper-tts-web");
     const wav = await tts.predict({ text, voiceId: LOCAL_VOICE });
     const samples = await blobToSamples(wav);

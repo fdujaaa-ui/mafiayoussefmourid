@@ -1113,7 +1113,16 @@ function MafiaGame() {
                 setOfflineVoiceStatus("يتم تجهيز الصوت العربي الدائم…");
                 void prepareOfflineVoice((percent) =>
                   setOfflineVoiceStatus(`يتم تنزيل الصوت الدائم… ${percent}٪`),
-                );
+                )
+                  .then(() => {
+                    setOfflineVoiceStatus("الصوت العربي الدائم جاهز");
+                    window.setTimeout(() => setOfflineVoiceStatus(null), 3500);
+                  })
+                  .catch(() => {
+                    setOfflineVoiceStatus(
+                      "تعذّر تنزيل الصوت الدائم. تحقّق من الإنترنت وحاول مجدداً.",
+                    );
+                  });
               }}
               className="shrink-0 rounded-md border border-player-accent/50 px-3 py-2 font-bold"
             >
