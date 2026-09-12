@@ -7,6 +7,10 @@ let ctx: AudioContext | null = null;
 const cache = new Map<string, Float32Array>();
 const inflight = new Map<string, Promise<Float32Array>>();
 const persistentCache = new Map<string, Float32Array>();
+const localInflight = new Map<string, Promise<Float32Array>>();
+
+const LOCAL_VOICE = "ar_JO-kareem-medium";
+let localVoiceReady: Promise<void> | null = null;
 
 let activeSources: AudioBufferSourceNode[] = [];
 let generation = 0;
@@ -21,6 +25,80 @@ const DB_STORE = "audio";
 class NarratorRequestError extends Error {
   constructor(message: string, readonly status: number) {
     super(message);
+  }
+}
+
+async function blobToSamples(blob: Blob): Promise<Float32Array> {
+  const c = getCtx();
+
+  if (!c) {
+    throw new Error("تعذّر تشغيل الصوت المحلي على هذا الجهاز.");
+  }
+
+  const decoded = await c.decodeAudioData(await blob.arrayBuffer());
+  return new Float32Array(decoded.getChannelData(0));
+}
+
+/**
+ * Download and initialize the permanent Arabic male voice on this device.
+ * The model is kept by the browser and does not use any paid credits.
+ */
+export async function prepareOfflineVoice(
+  onProgress?: (percent: number) => void,
+): Promise<void> {
+  if (typeof window === "undefined") return;
+
+  if (!localVoiceReady) {
+    localVoiceReady = (async () => {
+      const tts = await import("@mintplex-labs/piper-tts-web");
+      const storedVoices = await tts.stored().catch(() => []);
+
+      if (!storedVoices.includes(LOCAL_VOICE)) {
+        await tts.download(LOCAL_VOICE, (progress) => {
+          if (progress.total > 0) {
+            onProgress?.(
+              Math.min(100, Math.round((progress.loaded / progress.total) * 100)),
+            );
+          }
+        });
+      }
+
+      // Warm the WebAssembly engine too, so all runtime files are cached.
+      await tts.predict({ text: "جاهز", voiceId: LOCAL_VOICE });
+      onProgress?.(100);
+    })().catch((error: unknown) => {
+      localVoiceReady = null;
+      throw error;
+    });
+  }
+
+  return localVoiceReady;
+}
+
+async function generateLocalAudio(text: string): Promise<Float32Array> {
+  const running = localInflight.get(text);
+  if (running) return running;
+
+  const task = (async () => {
+    const tts = await import("@mintplex-labs/piper-tts-web");
+    const wav = await tts.predict({ text, voiceId: LOCAL_VOICE });
+    const samples = await blobToSamples(wav);
+
+    if (!samples.length) {
+      throw new Error("لم يتمكن الصوت المحلي من قراءة الجملة.");
+    }
+
+    cache.set(text, samples);
+    await saveAudio(text, samples);
+    return samples;
+  })();
+
+  localInflight.set(text, task);
+
+  try {
+    return await task;
+  } finally {
+    localInflight.delete(text);
   }
 }
 
@@ -549,7 +627,7 @@ export function speak(
         );
       }
     })
-    .catch((error: unknown) => {
+    .catch(async (error: unknown) => {
       if (
         myGen !== generation ||
         completed
@@ -557,22 +635,43 @@ export function speak(
         return;
       }
 
-      const message =
-        error instanceof Error
-          ? error.message
-          : "تعذّر تشغيل صوت المرشد.";
-
-      onError?.(message);
-
-      // IMPORTANT:
-      // Never use the iPhone/browser voice as a replacement.
-      // If Charon cannot be generated, simply report the error.
       if (!started) {
-        complete();
-      } else {
-        streamFinished = true;
-        finish();
+        try {
+          const localSamples = await generateLocalAudio(text);
+
+          if (myGen !== generation || completed) return;
+
+          schedule(localSamples);
+          streamFinished = true;
+          finish();
+
+          if (scheduled > 0) {
+            window.setTimeout(
+              complete,
+              Math.max(1000, (playhead - c.currentTime) * 1000 + 1200),
+            );
+          }
+
+          return;
+        } catch (localError: unknown) {
+          const cloudMessage =
+            error instanceof Error ? error.message : "تعذّر تشغيل صوت Charon.";
+          const localMessage =
+            localError instanceof Error
+              ? localError.message
+              : "تعذّر تشغيل الصوت المحلي.";
+
+          onError?.(`${cloudMessage} ${localMessage}`);
+          complete();
+          return;
+        }
       }
+
+      onError?.(
+        error instanceof Error ? error.message : "تعذّر تشغيل صوت المرشد.",
+      );
+      streamFinished = true;
+      finish();
     });
 }
 

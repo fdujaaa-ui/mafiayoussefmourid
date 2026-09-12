@@ -11,7 +11,7 @@ import {
 } from "@/lib/mafia";
 import {
   initNarrator,
-  prepareVoice,
+  prepareOfflineVoice,
   speak,
   stopSpeaking,
 } from "@/lib/narrator";
@@ -74,6 +74,7 @@ function MafiaGame() {
   const [winner, setWinner] = useState<"mafia" | "town" | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [offlineVoiceStatus, setOfflineVoiceStatus] = useState<string | null>(null);
 
   const timerRef = useRef<number | null>(null);
   const retryNarrationRef = useRef<(() => void) | null>(null);
@@ -225,27 +226,18 @@ function MafiaGame() {
       }),
     );
 
-    /*
-     * IMPORTANT:
-     * قبل بداية اللعبة، نحضّر صوت Charon لكل اسم.
-     * الصوت يتخزن في IndexedDB داخل الجهاز.
-     * إذا انتهى الـcredit بعد ذلك، الأصوات المحفوظة تبقى تعمل.
-     */
     initNarrator();
-
-    const uniqueNames = [
-      ...new Set(
-        shuffledPlayers
-          .map((p) => p.name.trim())
-          .filter(Boolean),
-      ),
-    ];
-
-    await Promise.all(
-      uniqueNames.map((name) =>
-        prepareVoice(name),
-      ),
-    );
+    setOfflineVoiceStatus("يتم تجهيز الصوت العربي الدائم…");
+    void prepareOfflineVoice((percent) => {
+      setOfflineVoiceStatus(`يتم تنزيل الصوت الدائم… ${percent}٪`);
+    })
+      .then(() => {
+        setOfflineVoiceStatus("الصوت العربي الدائم جاهز");
+        window.setTimeout(() => setOfflineVoiceStatus(null), 3500);
+      })
+      .catch(() => {
+        setOfflineVoiceStatus("تعذّر تنزيل الصوت الدائم. تحقّق من الإنترنت وحاول مجدداً.");
+      });
 
     setPlayers(shuffledPlayers);
     setRevealIndex(0);
@@ -1102,22 +1094,30 @@ function MafiaGame() {
             </section>
           )}
 
-        {voiceError && !muted && (
+        {(voiceError || offlineVoiceStatus) && !muted && (
           <aside
             className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-player-accent/40 bg-player-accent/10 p-3 text-sm"
             role="alert"
           >
             <span>
-              {voiceError}
+              {voiceError ?? offlineVoiceStatus}
             </span>
 
             <button
-              onClick={() =>
-                retryNarrationRef.current?.()
-              }
+              onClick={() => {
+                if (voiceError) {
+                  retryNarrationRef.current?.();
+                  return;
+                }
+
+                setOfflineVoiceStatus("يتم تجهيز الصوت العربي الدائم…");
+                void prepareOfflineVoice((percent) =>
+                  setOfflineVoiceStatus(`يتم تنزيل الصوت الدائم… ${percent}٪`),
+                );
+              }}
               className="shrink-0 rounded-md border border-player-accent/50 px-3 py-2 font-bold"
             >
-              إعادة المحاولة
+              {voiceError ? "إعادة المحاولة" : "إعادة التنزيل"}
             </button>
           </aside>
         )}
