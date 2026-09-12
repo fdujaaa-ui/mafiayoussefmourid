@@ -1,5 +1,5 @@
 // Mafia Arabic narrator — Google Gemini Charon via Cloudflare Worker.
-// No Lovable TTS and no local Piper/browser voice fallback.
+// No Lovable TTS and no local/browser voice fallback.
 
 let ctx: AudioContext | null = null;
 
@@ -11,6 +11,7 @@ let generation = 0;
 let pendingCompletion: (() => void) | null = null;
 
 const SAMPLE_RATE = 24000;
+
 const WORKER_URL =
   "https://mafia-voice.younessydey707.workers.dev";
 
@@ -18,24 +19,35 @@ const DB_NAME = "mafia-narrator";
 const DB_STORE = "audio";
 
 class NarratorRequestError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
     super(message);
   }
 }
 
 function getCtx(): AudioContext | null {
-  if (typeof window === "undefined") return null;
+  if (typeof window === "undefined") {
+    return null;
+  }
 
   const Ctor =
     window.AudioContext ??
-    (window as unknown as {
-      webkitAudioContext?: typeof AudioContext;
-    }).webkitAudioContext;
+    (
+      window as unknown as {
+        webkitAudioContext?: typeof AudioContext;
+      }
+    ).webkitAudioContext;
 
-  if (!Ctor) return null;
+  if (!Ctor) {
+    return null;
+  }
 
   if (!ctx) {
-    ctx = new Ctor({ sampleRate: SAMPLE_RATE });
+    ctx = new Ctor({
+      sampleRate: SAMPLE_RATE,
+    });
   }
 
   return ctx;
@@ -53,8 +65,13 @@ async function openAudioDB(): Promise<IDBDatabase> {
       }
     };
 
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      resolve(request.result);
+    };
+
+    request.onerror = () => {
+      reject(request.error);
+    };
   });
 }
 
@@ -62,18 +79,31 @@ async function saveAudio(
   text: string,
   samples: Float32Array,
 ) {
-  if (typeof window === "undefined") return;
+  if (typeof window === "undefined") {
+    return;
+  }
 
   try {
     const db = await openAudioDB();
 
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(DB_STORE, "readwrite");
+      const tx = db.transaction(
+        DB_STORE,
+        "readwrite",
+      );
 
-      tx.objectStore(DB_STORE).put(samples, text);
+      tx.objectStore(DB_STORE).put(
+        samples,
+        text,
+      );
 
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
+      tx.oncomplete = () => {
+        resolve();
+      };
+
+      tx.onerror = () => {
+        reject(tx.error);
+      };
     });
 
     db.close();
@@ -119,8 +149,9 @@ async function loadAudio(
             }
           };
 
-          request.onerror = () =>
+          request.onerror = () => {
             reject(request.error);
+          };
         },
       );
 
@@ -153,7 +184,7 @@ export function stopSpeaking(
     try {
       source.stop();
     } catch {
-      /* ignore */
+      // Ignore already stopped sources.
     }
   }
 
@@ -170,7 +201,9 @@ export function stopSpeaking(
 function pcmToFloat(
   bytes: Uint8Array,
 ): Float32Array {
-  const usable = bytes.length - (bytes.length % 2);
+  const usable =
+    bytes.length -
+    (bytes.length % 2);
 
   const view = new DataView(
     bytes.buffer,
@@ -184,7 +217,10 @@ function pcmToFloat(
 
   for (let i = 0; i < out.length; i++) {
     out[i] =
-      view.getInt16(i * 2, true) / 32768;
+      view.getInt16(
+        i * 2,
+        true,
+      ) / 32768;
   }
 
   return out;
@@ -250,15 +286,14 @@ async function fetchAudio(
     return samples;
   }
 
-  // 4. Google Gemini Charon through Cloudflare
+  // 4. Google Gemini Charon through Cloudflare Worker
   const task = (async () => {
     const response = await fetch(
       WORKER_URL,
       {
         method: "POST",
         headers: {
-          "Content-Type":
-            "application/json",
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
           text: cleanText,
@@ -279,11 +314,12 @@ async function fetchAudio(
       );
     }
 
-    const reader = response.body
-      .pipeThrough(
-        new TextDecoderStream(),
-      )
-      .getReader();
+    const reader =
+      response.body
+        .pipeThrough(
+          new TextDecoderStream(),
+        )
+        .getReader();
 
     let buffer = "";
 
@@ -297,7 +333,9 @@ async function fetchAudio(
     let receivedDone = false;
 
     const flushPlayback = () => {
-      if (!playbackSamples) return;
+      if (!playbackSamples) {
+        return;
+      }
 
       onChunk?.(
         concat(playbackChunks),
@@ -311,7 +349,9 @@ async function fetchAudio(
       const { value, done } =
         await reader.read();
 
-      if (done) break;
+      if (done) {
+        break;
+      }
 
       buffer += value;
 
@@ -322,9 +362,7 @@ async function fetchAudio(
         lines.pop() ?? "";
 
       for (const line of lines) {
-        if (
-          !line.startsWith("data:")
-        ) {
+        if (!line.startsWith("data:")) {
           continue;
         }
 
@@ -471,7 +509,9 @@ async function fetchAudio(
 export async function prepareVoice(
   text: string,
 ): Promise<boolean> {
-  if (!text.trim()) return false;
+  if (!text.trim()) {
+    return false;
+  }
 
   try {
     await fetchAudio(
@@ -487,7 +527,9 @@ export async function prepareVoice(
 export function prefetch(
   text: string,
 ) {
-  if (!text.trim()) return;
+  if (!text.trim()) {
+    return;
+  }
 
   void fetchAudio(
     text.trim(),
@@ -534,8 +576,7 @@ export function speak(
       pendingCompletion ===
       complete
     ) {
-      pendingCompletion =
-        null;
+      pendingCompletion = null;
     }
 
     onEnd?.();
