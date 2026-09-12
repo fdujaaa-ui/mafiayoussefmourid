@@ -1,5 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ROLES,
   buildRoles,
@@ -11,7 +17,6 @@ import {
 } from "@/lib/mafia";
 import {
   initNarrator,
-  prepareOfflineVoice,
   speak,
   stopSpeaking,
 } from "@/lib/narrator";
@@ -19,25 +24,44 @@ import {
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "ليلة المافيا — لعبة المافيا بمرشد صوتي عربي" },
+      {
+        title: "ليلة المافيا — لعبة المافيا بمرشد صوتي عربي",
+      },
       {
         name: "description",
         content:
           "العب المافيا مع أصدقائك بهاتف واحد: توزيع أدوار تلقائي، مرشد صوتي عربي فوري يدير الليل والنهار، وتصويت وحساب فائز.",
       },
-      { property: "og:title", content: "ليلة المافيا — لعبة المافيا بمرشد صوتي" },
+      {
+        property: "og:title",
+        content:
+          "ليلة المافيا — لعبة المافيا بمرشد صوتي",
+      },
       {
         property: "og:description",
-        content: "مدير لعبة المافيا الاحترافي بصوت عربي فوري يدير كل الجولات.",
+        content:
+          "مدير لعبة المافيا الاحترافي بصوت عربي فوري يدير كل الجولات.",
       },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
+      {
+        property: "og:type",
+        content: "website",
+      },
+      {
+        name: "twitter:card",
+        content: "summary_large_image",
+      },
     ],
   }),
   component: MafiaGame,
 });
 
-type Phase = "setup" | "reveal" | "night" | "morning" | "vote" | "end";
+type Phase =
+  | "setup"
+  | "reveal"
+  | "night"
+  | "morning"
+  | "vote"
+  | "end";
 
 type NightStep = {
   text: string;
@@ -46,39 +70,94 @@ type NightStep = {
 };
 
 function MafiaGame() {
-  const [phase, setPhase] = useState<Phase>("setup");
-  const [muted, setMuted] = useState(false);
-  const [playerCount, setPlayerCount] = useState(8);
-  const [names, setNames] = useState<string[]>(
-    Array.from({ length: 8 }, (_, i) => `اللاعب ${i + 1}`),
-  );
-  const [mafiaCount, setMafiaCount] = useState(2);
-  const [useDoctor, setUseDoctor] = useState(true);
-  const [useDetective, setUseDetective] = useState(true);
+  const [phase, setPhase] =
+    useState<Phase>("setup");
 
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [revealIndex, setRevealIndex] = useState(0);
-  const [revealShown, setRevealShown] = useState(false);
+  const [muted, setMuted] =
+    useState(false);
 
-  const [night, setNight] = useState(1);
-  const [stepIndex, setStepIndex] = useState(0);
-  const [speaking, setSpeaking] = useState(false);
-  const [awaitingPick, setAwaitingPick] = useState(false);
-  const [nightPick, setNightPick] = useState<number | null>(null);
-  const [mafiaTarget, setMafiaTarget] = useState<number | null>(null);
-  const [doctorTarget, setDoctorTarget] = useState<number | null>(null);
-  const [detectiveResult, setDetectiveResult] = useState<string | null>(null);
-  const [morningText, setMorningText] = useState("");
-  const [voteTarget, setVoteTarget] = useState<number | null>(null);
-  const [voteResult, setVoteResult] = useState<string | null>(null);
-  const [winner, setWinner] = useState<"mafia" | "town" | null>(null);
-  const [log, setLog] = useState<string[]>([]);
-  const [voiceError, setVoiceError] = useState<string | null>(null);
-  const [offlineVoiceStatus, setOfflineVoiceStatus] = useState<string | null>(null);
+  const [playerCount, setPlayerCount] =
+    useState(8);
 
-  const timerRef = useRef<number | null>(null);
-  const retryNarrationRef = useRef<(() => void) | null>(null);
-  const mutedRef = useRef(muted);
+  const [names, setNames] =
+    useState<string[]>(
+      Array.from(
+        { length: 8 },
+        (_, i) => `اللاعب ${i + 1}`,
+      ),
+    );
+
+  const [mafiaCount, setMafiaCount] =
+    useState(2);
+
+  const [useDoctor, setUseDoctor] =
+    useState(true);
+
+  const [useDetective, setUseDetective] =
+    useState(true);
+
+  const [players, setPlayers] =
+    useState<Player[]>([]);
+
+  const [revealIndex, setRevealIndex] =
+    useState(0);
+
+  const [revealShown, setRevealShown] =
+    useState(false);
+
+  const [night, setNight] =
+    useState(1);
+
+  const [stepIndex, setStepIndex] =
+    useState(0);
+
+  const [speaking, setSpeaking] =
+    useState(false);
+
+  const [awaitingPick, setAwaitingPick] =
+    useState(false);
+
+  const [nightPick, setNightPick] =
+    useState<number | null>(null);
+
+  const [mafiaTarget, setMafiaTarget] =
+    useState<number | null>(null);
+
+  const [doctorTarget, setDoctorTarget] =
+    useState<number | null>(null);
+
+  const [detectiveResult, setDetectiveResult] =
+    useState<string | null>(null);
+
+  const [morningText, setMorningText] =
+    useState("");
+
+  const [voteTarget, setVoteTarget] =
+    useState<number | null>(null);
+
+  const [voteResult, setVoteResult] =
+    useState<string | null>(null);
+
+  const [winner, setWinner] =
+    useState<"mafia" | "town" | null>(
+      null,
+    );
+
+  const [log, setLog] =
+    useState<string[]>([]);
+
+  const [voiceError, setVoiceError] =
+    useState<string | null>(null);
+
+  const timerRef =
+    useRef<number | null>(null);
+
+  const retryNarrationRef =
+    useRef<(() => void) | null>(null);
+
+  const mutedRef =
+    useRef(muted);
+
   mutedRef.current = muted;
 
   useEffect(() => {
@@ -88,18 +167,25 @@ function MafiaGame() {
       stopSpeaking();
 
       if (timerRef.current) {
-        window.clearTimeout(timerRef.current);
+        window.clearTimeout(
+          timerRef.current,
+        );
       }
     };
   }, []);
 
   useEffect(() => {
-    const n = Math.max(4, Math.min(16, playerCount));
+    const n = Math.max(
+      4,
+      Math.min(16, playerCount),
+    );
 
     setNames((prev) =>
       Array.from(
         { length: n },
-        (_, i) => prev[i] ?? `اللاعب ${i + 1}`,
+        (_, i) =>
+          prev[i] ??
+          `اللاعب ${i + 1}`,
       ),
     );
 
@@ -111,68 +197,83 @@ function MafiaGame() {
     );
   }, [playerCount]);
 
-  const alive = players.filter((p) => p.alive);
-  const aliveRoles = new Set(alive.map((p) => p.role));
+  const alive = players.filter(
+    (p) => p.alive,
+  );
 
-  const nightSteps = useMemo<NightStep[]>(() => {
-    const steps: NightStep[] = [
-      {
-        text: `الليلة رقم ${night} بدأت. المدينة تنام الآن. الجميع يغمض عينيه.`,
-        pause: 4500,
-      },
-      {
-        text:
-          "المافيا، افتحوا أعينكم. تعرّفوا على بعضكم، ثم اختاروا ضحيتكم.",
-        pause: 300,
-        action: "mafia",
-      },
-      {
-        text: "المافيا، أغمضوا أعينكم.",
-        pause: 3500,
-      },
-    ];
+  const aliveRoles = new Set(
+    alive.map((p) => p.role),
+  );
 
-    if (aliveRoles.has("doctor")) {
+  const nightSteps =
+    useMemo<NightStep[]>(() => {
+      const steps: NightStep[] = [
+        {
+          text: `الليلة رقم ${night} بدأت. المدينة تنام الآن. الجميع يغمض عينيه.`,
+          pause: 4500,
+        },
+        {
+          text:
+            "المافيا، افتحوا أعينكم. تعرّفوا على بعضكم، ثم اختاروا ضحيتكم.",
+          pause: 300,
+          action: "mafia",
+        },
+        {
+          text:
+            "المافيا، أغمضوا أعينكم.",
+          pause: 3500,
+        },
+      ];
+
+      if (aliveRoles.has("doctor")) {
+        steps.push({
+          text:
+            "الطبيب، افتح عينيك. من تريد أن تنقذ هذه الليلة؟",
+          pause: 300,
+          action: "doctor",
+        });
+
+        steps.push({
+          text:
+            "الطبيب، أغمض عينيك.",
+          pause: 3500,
+        });
+      }
+
+      if (
+        aliveRoles.has("detective")
+      ) {
+        steps.push({
+          text:
+            "المحقق، افتح عينيك. من تشك فيه هذه الليلة؟",
+          pause: 300,
+          action: "detective",
+        });
+
+        steps.push({
+          text:
+            "المحقق، أغمض عينيك.",
+          pause: 3500,
+        });
+      }
+
       steps.push({
         text:
-          "الطبيب، افتح عينيك. من تريد أن تنقذ هذه الليلة؟",
-        pause: 300,
-        action: "doctor",
+          "انتهى الليل. أشرقت الشمس، افتحوا أعينكم جميعاً.",
+        pause: 800,
       });
 
-      steps.push({
-        text: "الطبيب، أغمض عينيك.",
-        pause: 3500,
-      });
-    }
+      return steps;
 
-    if (aliveRoles.has("detective")) {
-      steps.push({
-        text:
-          "المحقق، افتح عينيك. من تشك فيه هذه الليلة؟",
-        pause: 300,
-        action: "detective",
-      });
-
-      steps.push({
-        text: "المحقق، أغمض عينيك.",
-        pause: 3500,
-      });
-    }
-
-    steps.push({
-      text:
-        "انتهى الليل. أشرقت الشمس، افتحوا أعينكم جميعاً.",
-      pause: 800,
-    });
-
-    return steps;
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [night, players]);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [night, players]);
 
   const say = useCallback(
-    (text: string, then?: () => void, pause = 0) => {
+    (
+      text: string,
+      then?: () => void,
+      pause = 0,
+    ) => {
       setSpeaking(true);
       setVoiceError(null);
 
@@ -187,13 +288,16 @@ function MafiaGame() {
 
         onEnd: () => {
           if (timerRef.current) {
-            window.clearTimeout(timerRef.current);
+            window.clearTimeout(
+              timerRef.current,
+            );
           }
 
-          timerRef.current = window.setTimeout(() => {
-            setSpeaking(false);
-            then?.();
-          }, pause);
+          timerRef.current =
+            window.setTimeout(() => {
+              setSpeaking(false);
+              then?.();
+            }, pause);
         },
       });
     },
@@ -210,59 +314,69 @@ function MafiaGame() {
       useDetective,
     );
 
-    const list: Player[] = names
-      .slice(0, playerCount)
-      .map((n, i) => ({
-        id: i,
-        name: n.trim() || `اللاعب ${i + 1}`,
-        role: roles[i] as RoleId,
-        alive: true,
-      }));
+    const list: Player[] =
+      names
+        .slice(0, playerCount)
+        .map((n, i) => ({
+          id: i,
+          name:
+            n.trim() ||
+            `اللاعب ${i + 1}`,
+          role: roles[i] as RoleId,
+          alive: true,
+        }));
 
-    const shuffledPlayers = shuffle(list).map(
-      (p, i) => ({
-        ...p,
-        id: i,
-      }),
-    );
+    const shuffledPlayers =
+      shuffle(list).map(
+        (p, i) => ({
+          ...p,
+          id: i,
+        }),
+      );
 
     initNarrator();
-    setOfflineVoiceStatus("يتم تجهيز الصوت العربي الدائم…");
-    void prepareOfflineVoice((percent) => {
-      setOfflineVoiceStatus(`يتم تنزيل الصوت الدائم… ${percent}٪`);
-    })
-      .then(() => {
-        setOfflineVoiceStatus("الصوت العربي الدائم جاهز");
-        window.setTimeout(() => setOfflineVoiceStatus(null), 3500);
-      })
-      .catch(() => {
-        setOfflineVoiceStatus("تعذّر تنزيل الصوت الدائم. تحقّق من الإنترنت وحاول مجدداً.");
-      });
 
-    setPlayers(shuffledPlayers);
+    setPlayers(
+      shuffledPlayers,
+    );
+
     setRevealIndex(0);
     setRevealShown(false);
     setLog([]);
     setNight(1);
     setWinner(null);
+    setVoiceError(null);
     setPhase("reveal");
 
     say(
-      `بدأ توزيع الأدوار. يمسك كل لاعب الهاتف وحده، يكشف دوره ويحفظه، ثم يمرر الهاتف. ${shuffledPlayers[0]?.name ?? "اللاعب الأول"}، أمسك الهاتف الآن وتأكد أن لا أحد يرى الشاشة.`,
+      `بدأ توزيع الأدوار. يمسك كل لاعب الهاتف وحده، يكشف دوره ويحفظه، ثم يمرر الهاتف. ${
+        shuffledPlayers[0]?.name ??
+        "اللاعب الأول"
+      }، أمسك الهاتف الآن وتأكد أن لا أحد يرى الشاشة.`,
     );
   }
 
   /* ---------------- reveal ---------------- */
 
   function nextReveal() {
-    if (revealIndex + 1 < players.length) {
-      const nextIndex = revealIndex + 1;
+    if (
+      revealIndex + 1 <
+      players.length
+    ) {
+      const nextIndex =
+        revealIndex + 1;
 
-      setRevealIndex(nextIndex);
+      setRevealIndex(
+        nextIndex,
+      );
+
       setRevealShown(false);
 
       say(
-        `${players[nextIndex]?.name ?? "اللاعب التالي"}، أمسك الهاتف الآن وحدك، واستعد لرؤية دورك بسرية.`,
+        `${
+          players[nextIndex]?.name ??
+          "اللاعب التالي"
+        }، أمسك الهاتف الآن وحدك، واستعد لرؤية دورك بسرية.`,
       );
     } else {
       say(
@@ -274,25 +388,32 @@ function MafiaGame() {
 
   /* ---------------- night ---------------- */
 
-  const startNight = useCallback(
-    (n: number) => {
-      setNight(n);
-      setMafiaTarget(null);
-      setDoctorTarget(null);
-      setDetectiveResult(null);
-      setStepIndex(0);
-      setAwaitingPick(false);
-      setPhase("night");
-    },
-    [],
-  );
+  const startNight =
+    useCallback(
+      (n: number) => {
+        setNight(n);
+        setMafiaTarget(null);
+        setDoctorTarget(null);
+        setDetectiveResult(null);
+        setStepIndex(0);
+        setAwaitingPick(false);
+        setNightPick(null);
+        setPhase("night");
+      },
+      [],
+    );
 
   useEffect(() => {
-    if (phase !== "night") return;
+    if (phase !== "night") {
+      return;
+    }
 
-    const step = nightSteps[stepIndex];
+    const step =
+      nightSteps[stepIndex];
 
-    if (!step) return;
+    if (!step) {
+      return;
+    }
 
     setAwaitingPick(false);
 
@@ -305,7 +426,9 @@ function MafiaGame() {
           stepIndex + 1 <
           nightSteps.length
         ) {
-          setStepIndex((i) => i + 1);
+          setStepIndex(
+            (i) => i + 1,
+          );
         } else {
           resolveNight();
         }
@@ -322,21 +445,39 @@ function MafiaGame() {
   ) {
     setAwaitingPick(false);
 
-    if (step.action === "mafia") {
-      setMafiaTarget(playerId);
-      advance();
-    } else if (step.action === "doctor") {
-      setDoctorTarget(playerId);
-      advance();
-    } else if (step.action === "detective") {
-      const target = players.find(
-        (p) => p.id === playerId,
+    if (
+      step.action === "mafia"
+    ) {
+      setMafiaTarget(
+        playerId,
       );
+      advance();
+    } else if (
+      step.action === "doctor"
+    ) {
+      setDoctorTarget(
+        playerId >= 0
+          ? playerId
+          : null,
+      );
+      advance();
+    } else if (
+      step.action ===
+      "detective"
+    ) {
+      const target =
+        players.find(
+          (p) =>
+            p.id === playerId,
+        );
 
-      if (!target) return;
+      if (!target) {
+        return;
+      }
 
       const isMafia =
-        ROLES[target.role].team === "mafia";
+        ROLES[target.role]
+          .team === "mafia";
 
       setDetectiveResult(
         `${target.name}: ${
@@ -357,11 +498,15 @@ function MafiaGame() {
 
   function advance() {
     setStepIndex((i) => {
-      if (i + 1 < nightSteps.length) {
+      if (
+        i + 1 <
+        nightSteps.length
+      ) {
         return i + 1;
       }
 
       resolveNight();
+
       return i;
     });
   }
@@ -372,30 +517,45 @@ function MafiaGame() {
       mafiaTarget === doctorTarget;
 
     let text = "";
+
     let updated = players;
 
-    if (mafiaTarget === null || saved) {
-      const attacked = players.find(
-        (p) => p.id === mafiaTarget,
-      );
+    if (
+      mafiaTarget === null ||
+      saved
+    ) {
+      const attacked =
+        players.find(
+          (p) =>
+            p.id === mafiaTarget,
+        );
 
       text = saved
         ? `هاجمت المافيا ${
-            attacked?.name ?? "أحد اللاعبين"
+            attacked?.name ??
+            "أحد اللاعبين"
           }، لكن الطبيب أنقذه في اللحظة الأخيرة. لم يمت أحد هذه الليلة.`
         : "مرّت الليلة بسلام، لم يمت أحد هذه الليلة.";
     } else {
-      const victim = players.find(
-        (p) => p.id === mafiaTarget,
-      );
+      const victim =
+        players.find(
+          (p) =>
+            p.id === mafiaTarget,
+        );
 
-      if (!victim) return;
+      if (!victim) {
+        return;
+      }
 
-      updated = players.map((p) =>
-        p.id === mafiaTarget
-          ? { ...p, alive: false }
-          : p,
-      );
+      updated =
+        players.map((p) =>
+          p.id === mafiaTarget
+            ? {
+                ...p,
+                alive: false,
+              }
+            : p,
+        );
 
       text = `مع شروق الشمس، وُجد ${victim.name} مقتولاً على يد المافيا. خرج من اللعبة، وكان دوره ${ROLES[victim.role].name}.`;
 
@@ -410,10 +570,13 @@ function MafiaGame() {
     setMorningText(text);
     setPhase("morning");
 
-    const w = checkWinner(updated);
+    const w =
+      checkWinner(updated);
 
     say(text, () => {
-      if (w) endGame(w);
+      if (w) {
+        endGame(w);
+      }
     });
   }
 
@@ -430,19 +593,31 @@ function MafiaGame() {
   }
 
   function confirmVote() {
-    if (voteTarget === null) return;
+    if (
+      voteTarget === null
+    ) {
+      return;
+    }
 
-    const target = players.find(
-      (p) => p.id === voteTarget,
-    );
+    const target =
+      players.find(
+        (p) =>
+          p.id === voteTarget,
+      );
 
-    if (!target) return;
+    if (!target) {
+      return;
+    }
 
-    const updated = players.map((p) =>
-      p.id === voteTarget
-        ? { ...p, alive: false }
-        : p,
-    );
+    const updated =
+      players.map((p) =>
+        p.id === voteTarget
+          ? {
+              ...p,
+              alive: false,
+            }
+          : p,
+      );
 
     setPlayers(updated);
 
@@ -455,10 +630,13 @@ function MafiaGame() {
       `☀️ نهار ${night}: ${text}`,
     ]);
 
-    const w = checkWinner(updated);
+    const w =
+      checkWinner(updated);
 
     say(text, () => {
-      if (w) endGame(w);
+      if (w) {
+        endGame(w);
+      }
     });
   }
 
@@ -482,6 +660,7 @@ function MafiaGame() {
     setPlayers([]);
     setWinner(null);
     setLog([]);
+    setVoiceError(null);
   }
 
   const currentStep =
@@ -566,7 +745,10 @@ function MafiaGame() {
 
                 <div className="grid grid-cols-8 place-items-center gap-1.5 rounded-xl border border-player-accent/30 bg-background/35 p-3 sm:grid-cols-12">
                   {Array.from(
-                    { length: playerCount },
+                    {
+                      length:
+                        playerCount,
+                    },
                     (_, i) => (
                       <span
                         key={i}
@@ -593,8 +775,11 @@ function MafiaGame() {
 
               <div className="mt-4 grid grid-cols-7 gap-1.5 sm:grid-cols-13">
                 {Array.from(
-                  { length: 13 },
-                  (_, i) => i + 4,
+                  {
+                    length: 13,
+                  },
+                  (_, i) =>
+                    i + 4,
                 ).map((n) => (
                   <button
                     key={n}
@@ -719,7 +904,10 @@ function MafiaGame() {
 
               <div className="grid grid-cols-2 gap-2">
                 {names
-                  .slice(0, playerCount)
+                  .slice(
+                    0,
+                    playerCount,
+                  )
                   .map((n, i) => (
                     <input
                       key={i}
@@ -760,8 +948,9 @@ function MafiaGame() {
 
               <h2 className="text-2xl font-extrabold">
                 {
-                  players[revealIndex]
-                    .name
+                  players[
+                    revealIndex
+                  ].name
                 }
               </h2>
 
@@ -878,8 +1067,9 @@ function MafiaGame() {
                         if (
                           nightPick ===
                           null
-                        )
+                        ) {
                           return;
+                        }
 
                         const id =
                           nightPick;
@@ -1094,39 +1284,22 @@ function MafiaGame() {
             </section>
           )}
 
-        {(voiceError || offlineVoiceStatus) && !muted && (
+        {voiceError && !muted && (
           <aside
             className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-player-accent/40 bg-player-accent/10 p-3 text-sm"
             role="alert"
           >
             <span>
-              {voiceError ?? offlineVoiceStatus}
+              {voiceError}
             </span>
 
             <button
               onClick={() => {
-                if (voiceError) {
-                  retryNarrationRef.current?.();
-                  return;
-                }
-
-                setOfflineVoiceStatus("يتم تجهيز الصوت العربي الدائم…");
-                void prepareOfflineVoice((percent) =>
-                  setOfflineVoiceStatus(`يتم تنزيل الصوت الدائم… ${percent}٪`),
-                )
-                  .then(() => {
-                    setOfflineVoiceStatus("الصوت العربي الدائم جاهز");
-                    window.setTimeout(() => setOfflineVoiceStatus(null), 3500);
-                  })
-                  .catch(() => {
-                    setOfflineVoiceStatus(
-                      "تعذّر تنزيل الصوت الدائم. تحقّق من الإنترنت وحاول مجدداً.",
-                    );
-                  });
+                retryNarrationRef.current?.();
               }}
               className="shrink-0 rounded-md border border-player-accent/50 px-3 py-2 font-bold"
             >
-              {voiceError ? "إعادة المحاولة" : "إعادة التنزيل"}
+              إعادة المحاولة
             </button>
           </aside>
         )}
@@ -1175,7 +1348,9 @@ function PlayerPicker({
                   : "bg-secondary text-foreground/80"
               }`}
             >
-              {p.name.trim().charAt(0) ||
+              {p.name
+                .trim()
+                .charAt(0) ||
                 i + 1}
             </span>
 
