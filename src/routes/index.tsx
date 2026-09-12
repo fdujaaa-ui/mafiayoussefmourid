@@ -1,26 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import {
-  ROLES,
-  buildRoles,
-  checkWinner,
-  shuffle,
-  suggestedMafia,
-  type Player,
-  type RoleId,
-} from "@/lib/mafia";
-import {
-  initNarrator,
-  prefetch,
-  speak,
-  stopSpeaking,
-} from "@/lib/narrator";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ROLES, buildRoles, checkWinner, shuffle, type Player, type RoleId } from "@/lib/mafia";
+import { initNarrator, prefetch, speak, stopSpeaking } from "@/lib/narrator";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -31,25 +12,7 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "العب المافيا مع أصدقائك بهاتف واحد: توزيع أدوار تلقائي، مرشد صوتي عربي فوري يدير الليل والنهار، وتصويت وحساب فائز.",
-      },
-      {
-        property: "og:title",
-        content:
-          "ليلة المافيا — لعبة المافيا بمرشد صوتي",
-      },
-      {
-        property: "og:description",
-        content:
-          "مدير لعبة المافيا الاحترافي بصوت عربي فوري يدير كل الجولات.",
-      },
-      {
-        property: "og:type",
-        content: "website",
-      },
-      {
-        name: "twitter:card",
-        content: "summary_large_image",
+          "العب المافيا مع أصدقائك بهاتف واحد: توزيع أدوار تلقائي، مرشد صوتي عربي، وتصويت وحساب فائز.",
       },
     ],
   }),
@@ -70,145 +33,136 @@ type NightStep = {
   action?: "mafia" | "doctor" | "detective";
 };
 
-/* -------------------------------------------------------
-   Charon prefetch
-   تجهيز الأصوات مسبقاً قبل أن تحتاجها اللعبة
-------------------------------------------------------- */
+/* =========================================================
+   GOOGLE FREE TIER PREFETCH
+   ========================================================= */
 
-function prefetchStaticVoices(
+const PREFETCH_DELAY = 22000;
+
+let prefetchQueue: string[] = [];
+let prefetchRunning = false;
+
+function addToPrefetchQueue(texts: string[]) {
+  const clean = texts
+    .map((text) => text.trim())
+    .filter(Boolean);
+
+  for (const text of clean) {
+    if (!prefetchQueue.includes(text)) {
+      prefetchQueue.push(text);
+    }
+  }
+
+  void runPrefetchQueue();
+}
+
+async function runPrefetchQueue() {
+  if (prefetchRunning) {
+    return;
+  }
+
+  prefetchRunning = true;
+
+  try {
+    while (prefetchQueue.length > 0) {
+      const text = prefetchQueue.shift();
+
+      if (!text) {
+        continue;
+      }
+
+      try {
+        prefetch(text);
+      } catch {
+        // لا نوقف اللعبة إذا فشل تجهيز صوت
+      }
+
+      /*
+       * مهم جداً:
+       * Google Free Tier يسمح بعدد محدود جداً من الطلبات.
+       * لذلك ننتظر قبل الانتقال للطلب التالي.
+       */
+      await new Promise<void>((resolve) => {
+        window.setTimeout(
+          resolve,
+          PREFETCH_DELAY,
+        );
+      });
+    }
+  } finally {
+    prefetchRunning = false;
+  }
+}
+
+/*
+ * تجهيز أصوات الليلة الحالية فقط.
+ * لا نجهز 10 أو 20 ليلة دفعة واحدة.
+ */
+function queueNightVoices(
   nightNumber: number,
   includeDoctor: boolean,
   includeDetective: boolean,
 ) {
-  const voices = [
+  const texts = [
     `الليلة رقم ${nightNumber} بدأت. المدينة تنام الآن. الجميع يغمض عينيه.`,
-
     "المافيا، افتحوا أعينكم. تعرّفوا على بعضكم، ثم اختاروا ضحيتكم.",
-
     "المافيا، أغمضوا أعينكم.",
-
-    "الطبيب، افتح عينيك. من تريد أن تنقذ هذه الليلة؟",
-
-    "الطبيب، أغمض عينيك.",
-
-    "المحقق، افتح عينيك. من تشك فيه هذه الليلة؟",
-
-    "المحقق، أغمض عينيك.",
-
     "انتهى الليل. أشرقت الشمس، افتحوا أعينكم جميعاً.",
-
     "حان وقت التصويت. اختاروا من تشكّون أنه من المافيا.",
-
+    "نعم، هذا الشخص من المافيا.",
+    "لا، هذا الشخص بريء.",
     "انتهت اللعبة. المافيا سيطرت على المدينة، الفوز للمافيا!",
-
     "انتهت اللعبة. تم القضاء على كل أفراد المافيا، الفوز للمدينة!",
   ];
 
-  if (!includeDoctor) {
-    const doctorOpen =
-      "الطبيب، افتح عينيك. من تريد أن تنقذ هذه الليلة؟";
-
-    const doctorClose =
-      "الطبيب، أغمض عينيك.";
-
-    const i1 =
-      voices.indexOf(doctorOpen);
-
-    const i2 =
-      voices.indexOf(doctorClose);
-
-    if (i1 >= 0) {
-      voices.splice(i1, 1);
-    }
-
-    if (i2 >= 0) {
-      voices.splice(i2, 1);
-    }
-  }
-
-  if (!includeDetective) {
-    const detectiveOpen =
-      "المحقق، افتح عينيك. من تشك فيه هذه الليلة؟";
-
-    const detectiveClose =
-      "المحقق، أغمض عينيك.";
-
-    const i1 =
-      voices.indexOf(
-        detectiveOpen,
-      );
-
-    const i2 =
-      voices.indexOf(
-        detectiveClose,
-      );
-
-    if (i1 >= 0) {
-      voices.splice(i1, 1);
-    }
-
-    if (i2 >= 0) {
-      voices.splice(i2, 1);
-    }
-  }
-
-  for (const text of voices) {
-    prefetch(text);
-  }
-}
-
-/* -------------------------------------------------------
-   تجهيز أسماء اللاعبين والجمل المرتبطة بها
-------------------------------------------------------- */
-
-function prefetchPlayerVoices(
-  players: Player[],
-) {
-  for (const player of players) {
-    const name = player.name.trim();
-
-    if (!name) {
-      continue;
-    }
-
-    prefetch(
-      `${name}، أمسك الهاتف الآن وحدك، واستعد لرؤية دورك بسرية.`,
+  if (includeDoctor) {
+    texts.push(
+      "الطبيب، افتح عينيك. من تريد أن تنقذ هذه الليلة.",
+      "الطبيب، أغمض عينيك.",
     );
   }
+
+  if (includeDetective) {
+    texts.push(
+      "المحقق، افتح عينيك. من تشك فيه هذه الليلة؟",
+      "المحقق، أغمض عينيك.",
+    );
+  }
+
+  addToPrefetchQueue(texts);
 }
 
-/* -------------------------------------------------------
-   تجهيز جملة بداية اللعبة
-------------------------------------------------------- */
-
-function prefetchStartVoice(
-  firstPlayerName: string,
-) {
-  prefetch(
-    `بدأ توزيع الأدوار. يمسك كل لاعب الهاتف وحده، يكشف دوره ويحفظه، ثم يمرر الهاتف. ${
-      firstPlayerName || "اللاعب الأول"
-    }، أمسك الهاتف الآن وتأكد أن لا أحد يرى الشاشة.`,
+/*
+ * تجهيز صوت كل لاعب عند الحاجة.
+ * لا نرسل كل الأسماء مرة واحدة.
+ */
+function queueRevealVoices(players: Player[]) {
+  const texts = players.map(
+    (player) =>
+      `${player.name.trim()}، أمسك الهاتف الآن وحدك، واستعد لرؤية دورك بسرية.`,
   );
+
+  addToPrefetchQueue(texts);
 }
+
+/* =========================================================
+   GAME
+   ========================================================= */
 
 function MafiaGame() {
-  const [phase, setPhase] =
-    useState<Phase>("setup");
+  const [phase, setPhase] = useState<Phase>("setup");
 
-  const [muted, setMuted] =
-    useState(false);
+  const [muted, setMuted] = useState(false);
 
   const [playerCount, setPlayerCount] =
     useState(8);
 
-  const [names, setNames] =
-    useState<string[]>(
-      Array.from(
-        { length: 8 },
-        (_, i) =>
-          `اللاعب ${i + 1}`,
-      ),
-    );
+  const [names, setNames] = useState<string[]>(
+    Array.from(
+      { length: 8 },
+      (_, i) => `اللاعب ${i + 1}`,
+    ),
+  );
 
   const [mafiaCount, setMafiaCount] =
     useState(2);
@@ -228,8 +182,7 @@ function MafiaGame() {
   const [revealShown, setRevealShown] =
     useState(false);
 
-  const [night, setNight] =
-    useState(1);
+  const [night, setNight] = useState(1);
 
   const [stepIndex, setStepIndex] =
     useState(0);
@@ -261,37 +214,34 @@ function MafiaGame() {
   const [voteResult, setVoteResult] =
     useState<string | null>(null);
 
-  const [winner, setWinner] =
-    useState<
-      "mafia" | "town" | null
-    >(null);
+  const [winner, setWinner] = useState<
+    "mafia" | "town" | null
+  >(null);
 
-  const [log, setLog] =
-    useState<string[]>([]);
+  const [log, setLog] = useState<string[]>([]);
 
   const [voiceError, setVoiceError] =
     useState<string | null>(null);
 
-  const timerRef =
-    useRef<number | null>(null);
+  const timerRef = useRef<number | null>(
+    null,
+  );
 
   const retryNarrationRef =
     useRef<(() => void) | null>(null);
 
-  const mutedRef =
-    useRef(muted);
+  const mutedRef = useRef(muted);
 
   mutedRef.current = muted;
-
-  /* -------------------------------------------------------
-     تهيئة الصوت + تجهيز الأصوات الأساسية فور فتح اللعبة
-  ------------------------------------------------------- */
 
   useEffect(() => {
     initNarrator();
 
-    // تجهيز أصوات الليلة الأولى مسبقاً
-    prefetchStaticVoices(
+    /*
+     * نجهز فقط أصوات الليلة الأولى.
+     * لا نجهز كل اللعبة.
+     */
+    queueNightVoices(
       1,
       true,
       true,
@@ -311,10 +261,7 @@ function MafiaGame() {
   useEffect(() => {
     const n = Math.max(
       4,
-      Math.min(
-        16,
-        playerCount,
-      ),
+      Math.min(16, playerCount),
     );
 
     setNames((prev) =>
@@ -329,8 +276,7 @@ function MafiaGame() {
     setMafiaCount((m) =>
       Math.min(
         Math.max(1, m),
-        Math.floor(n / 2) -
-          1 || 1,
+        Math.floor(n / 2) - 1 || 1,
       ),
     );
   }, [playerCount]);
@@ -343,70 +289,67 @@ function MafiaGame() {
     alive.map((p) => p.role),
   );
 
-  const nightSteps =
-    useMemo<NightStep[]>(() => {
-      const steps: NightStep[] = [
-        {
-          text: `الليلة رقم ${night} بدأت. المدينة تنام الآن. الجميع يغمض عينيه.`,
-          pause: 4500,
-        },
-        {
-          text:
-            "المافيا، افتحوا أعينكم. تعرّفوا على بعضكم، ثم اختاروا ضحيتكم.",
-          pause: 300,
-          action: "mafia",
-        },
-        {
-          text:
-            "المافيا، أغمضوا أعينكم.",
-          pause: 3500,
-        },
-      ];
+  const nightSteps = useMemo<
+    NightStep[]
+  >(() => {
+    const steps: NightStep[] = [
+      {
+        text: `الليلة رقم ${night} بدأت. المدينة تنام الآن. الجميع يغمض عينيه.`,
+        pause: 4500,
+      },
+      {
+        text:
+          "المافيا، افتحوا أعينكم. تعرّفوا على بعضكم، ثم اختاروا ضحيتكم.",
+        pause: 300,
+        action: "mafia",
+      },
+      {
+        text:
+          "المافيا، أغمضوا أعينكم.",
+        pause: 3500,
+      },
+    ];
 
-      if (
-        aliveRoles.has("doctor")
-      ) {
-        steps.push({
-          text:
-            "الطبيب، افتح عينيك. من تريد أن تنقذ هذه الليلة؟",
-          pause: 300,
-          action: "doctor",
-        });
-
-        steps.push({
-          text:
-            "الطبيب، أغمض عينيك.",
-          pause: 3500,
-        });
-      }
-
-      if (
-        aliveRoles.has("detective")
-      ) {
-        steps.push({
-          text:
-            "المحقق، افتح عينيك. من تشك فيه هذه الليلة؟",
-          pause: 300,
-          action: "detective",
-        });
-
-        steps.push({
-          text:
-            "المحقق، أغمض عينيك.",
-          pause: 3500,
-        });
-      }
+    if (aliveRoles.has("doctor")) {
+      steps.push({
+        text:
+          "الطبيب، افتح عينيك. من تريد أن تنقذ هذه الليلة.",
+        pause: 300,
+        action: "doctor",
+      });
 
       steps.push({
         text:
-          "انتهى الليل. أشرقت الشمس، افتحوا أعينكم جميعاً.",
-        pause: 800,
+          "الطبيب، أغمض عينيك.",
+        pause: 3500,
+      });
+    }
+
+    if (
+      aliveRoles.has("detective")
+    ) {
+      steps.push({
+        text:
+          "المحقق، افتح عينيك. من تشك فيه هذه الليلة؟",
+        pause: 300,
+        action: "detective",
       });
 
-      return steps;
+      steps.push({
+        text:
+          "المحقق، أغمض عينيك.",
+        pause: 3500,
+      });
+    }
 
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [night, players]);
+    steps.push({
+      text:
+        "انتهى الليل. أشرقت الشمس، افتحوا أعينكم جميعاً.",
+      pause: 800,
+    });
+
+    return steps;
+  }, [night, players]);
 
   const say = useCallback(
     (
@@ -417,19 +360,15 @@ function MafiaGame() {
       setSpeaking(true);
       setVoiceError(null);
 
-      retryNarrationRef.current =
-        () =>
-          say(
-            text,
-            then,
-            pause,
-          );
+      retryNarrationRef.current = () =>
+        say(text, then, pause);
 
       speak(text, {
         muted: mutedRef.current,
 
-        onError: (message) =>
-          setVoiceError(message),
+        onError: (message) => {
+          setVoiceError(message);
+        },
 
         onEnd: () => {
           if (timerRef.current) {
@@ -449,7 +388,9 @@ function MafiaGame() {
     [],
   );
 
-  /* ---------------- setup ---------------- */
+  /* =========================================================
+     START GAME
+     ========================================================= */
 
   async function startGame() {
     const roles = buildRoles(
@@ -459,17 +400,16 @@ function MafiaGame() {
       useDetective,
     );
 
-    const list: Player[] =
-      names
-        .slice(0, playerCount)
-        .map((n, i) => ({
-          id: i,
-          name:
-            n.trim() ||
-            `اللاعب ${i + 1}`,
-          role: roles[i] as RoleId,
-          alive: true,
-        }));
+    const list: Player[] = names
+      .slice(0, playerCount)
+      .map((n, i) => ({
+        id: i,
+        name:
+          n.trim() ||
+          `اللاعب ${i + 1}`,
+        role: roles[i] as RoleId,
+        alive: true,
+      }));
 
     const shuffledPlayers =
       shuffle(list).map(
@@ -481,29 +421,7 @@ function MafiaGame() {
 
     initNarrator();
 
-    /*
-     * تجهيز الأصوات قبل بداية الجولة.
-     * لا ننتظرها حتى لا يتوقف بدء اللعبة.
-     */
-    prefetchStaticVoices(
-      1,
-      useDoctor,
-      useDetective,
-    );
-
-    prefetchPlayerVoices(
-      shuffledPlayers,
-    );
-
-    prefetchStartVoice(
-      shuffledPlayers[0]?.name ??
-        "اللاعب الأول",
-    );
-
-    setPlayers(
-      shuffledPlayers,
-    );
-
+    setPlayers(shuffledPlayers);
     setRevealIndex(0);
     setRevealShown(false);
     setLog([]);
@@ -512,15 +430,37 @@ function MafiaGame() {
     setVoiceError(null);
     setPhase("reveal");
 
-    say(
-      `بدأ توزيع الأدوار. يمسك كل لاعب الهاتف وحده، يكشف دوره ويحفظه، ثم يمرر الهاتف. ${
-        shuffledPlayers[0]?.name ??
-        "اللاعب الأول"
-      }، أمسك الهاتف الآن وتأكد أن لا أحد يرى الشاشة.`,
+    /*
+     * نضع الأصوات في طابور بطيء.
+     * لا يتم إرسالها كلها إلى Google مرة واحدة.
+     */
+    queueRevealVoices(
+      shuffledPlayers,
     );
+
+    queueNightVoices(
+      1,
+      useDoctor,
+      useDetective,
+    );
+
+    const firstPlayer =
+      shuffledPlayers[0]?.name ??
+      "اللاعب الأول";
+
+    const startText =
+      `بدأ توزيع الأدوار. يمسك كل لاعب الهاتف وحده، يكشف دوره ويحفظه، ثم يمرر الهاتف. ${firstPlayer}، أمسك الهاتف الآن وتأكد أن لا أحد يرى الشاشة.`;
+
+    addToPrefetchQueue([
+      startText,
+    ]);
+
+    say(startText);
   }
 
-  /* ---------------- reveal ---------------- */
+  /* =========================================================
+     REVEAL
+     ========================================================= */
 
   function nextReveal() {
     if (
@@ -530,30 +470,27 @@ function MafiaGame() {
       const nextIndex =
         revealIndex + 1;
 
-      setRevealIndex(
-        nextIndex,
-      );
-
+      setRevealIndex(nextIndex);
       setRevealShown(false);
 
       const nextName =
         players[nextIndex]?.name ??
         "اللاعب التالي";
 
-      // تجهيز صوت هذا اللاعب مسبقاً
-      prefetch(
-        `${nextName}، أمسك الهاتف الآن وحدك، واستعد لرؤية دورك بسرية.`,
-      );
+      const text =
+        `${nextName}، أمسك الهاتف الآن وحدك، واستعد لرؤية دورك بسرية.`;
 
-      say(
-        `${nextName}، أمسك الهاتف الآن وحدك، واستعد لرؤية دورك بسرية.`,
-      );
+      addToPrefetchQueue([
+        text,
+      ]);
+
+      say(text);
     } else {
       /*
-       * أثناء آخر مرحلة من توزيع الأدوار،
-       * نجهز أصوات الليلة الأولى مرة أخرى.
+       * قبل دخول الليلة الأولى،
+       * نضع أصواتها في الطابور.
        */
-      prefetchStaticVoices(
+      queueNightVoices(
         1,
         useDoctor,
         useDetective,
@@ -566,36 +503,33 @@ function MafiaGame() {
     }
   }
 
-  /* ---------------- night ---------------- */
+  /* =========================================================
+     NIGHT
+     ========================================================= */
 
-  const startNight =
-    useCallback(
-      (n: number) => {
-        setNight(n);
+  const startNight = useCallback(
+    (n: number) => {
+      setNight(n);
 
-        setMafiaTarget(null);
-        setDoctorTarget(null);
-        setDetectiveResult(null);
-        setStepIndex(0);
-        setAwaitingPick(false);
-        setNightPick(null);
-        setPhase("night");
+      setMafiaTarget(null);
+      setDoctorTarget(null);
+      setDetectiveResult(null);
+      setStepIndex(0);
+      setAwaitingPick(false);
+      setNightPick(null);
+      setPhase("night");
 
-        /*
-         * تجهيز كل أصوات هذه الليلة
-         * قبل أن يبدأ تشغيل الخطوات.
-         */
-        prefetchStaticVoices(
-          n,
-          useDoctor,
-          useDetective,
-        );
-      },
-      [
+      /*
+       * تجهيز الليلة الحالية فقط.
+       */
+      queueNightVoices(
+        n,
         useDoctor,
         useDetective,
-      ],
-    );
+      );
+    },
+    [useDoctor, useDetective],
+  );
 
   useEffect(() => {
     if (phase !== "night") {
@@ -642,12 +576,12 @@ function MafiaGame() {
     if (
       step.action === "mafia"
     ) {
-      setMafiaTarget(
-        playerId,
-      );
-
+      setMafiaTarget(playerId);
       advance();
-    } else if (
+      return;
+    }
+
+    if (
       step.action === "doctor"
     ) {
       setDoctorTarget(
@@ -657,9 +591,11 @@ function MafiaGame() {
       );
 
       advance();
-    } else if (
-      step.action ===
-      "detective"
+      return;
+    }
+
+    if (
+      step.action === "detective"
     ) {
       const target =
         players.find(
@@ -683,10 +619,16 @@ function MafiaGame() {
         }`,
       );
 
+      const resultText = isMafia
+        ? "نعم، هذا الشخص من المافيا."
+        : "لا، هذا الشخص بريء.";
+
+      addToPrefetchQueue([
+        resultText,
+      ]);
+
       say(
-        isMafia
-          ? "نعم، هذا الشخص من المافيا."
-          : "لا، هذا الشخص بريء.",
+        resultText,
         () => advance(),
       );
     }
@@ -702,10 +644,13 @@ function MafiaGame() {
       }
 
       resolveNight();
-
       return i;
     });
   }
+
+  /* =========================================================
+     RESOLVE NIGHT
+     ========================================================= */
 
   function resolveNight() {
     const saved =
@@ -713,7 +658,6 @@ function MafiaGame() {
       mafiaTarget === doctorTarget;
 
     let text = "";
-
     let updated = players;
 
     if (
@@ -743,26 +687,24 @@ function MafiaGame() {
         return;
       }
 
-      updated =
-        players.map((p) =>
+      updated = players.map(
+        (p) =>
           p.id === mafiaTarget
             ? {
                 ...p,
                 alive: false,
               }
             : p,
-        );
+      );
 
       text = `مع شروق الشمس، وُجد ${victim.name} مقتولاً على يد المافيا. خرج من اللعبة، وكان دوره ${ROLES[victim.role].name}.`;
 
       setPlayers(updated);
     }
 
-    /*
-     * تجهيز جملة الصباح التي تحتوي على اسم الضحية.
-     * ستكون جاهزة للجولة التالية إذا تكرر نفس النص.
-     */
-    prefetch(text);
+    addToPrefetchQueue([
+      text,
+    ]);
 
     setLog((l) => [
       ...l,
@@ -782,20 +724,23 @@ function MafiaGame() {
     });
   }
 
-  /* ---------------- day / vote ---------------- */
+  /* =========================================================
+     VOTE
+     ========================================================= */
 
   function startVote() {
     setVoteTarget(null);
     setVoteResult(null);
     setPhase("vote");
 
-    prefetch(
-      "حان وقت التصويت. اختاروا من تشكّون أنه من المافيا.",
-    );
+    const text =
+      "حان وقت التصويت. اختاروا من تشكّون أنه من المافيا.";
 
-    say(
-      "حان وقت التصويت. اختاروا من تشكّون أنه من المافيا.",
-    );
+    addToPrefetchQueue([
+      text,
+    ]);
+
+    say(text);
   }
 
   function confirmVote() {
@@ -829,8 +774,9 @@ function MafiaGame() {
 
     const text = `انتهى تصويت أهل المدينة. تم إخراج ${target.name} من اللعبة، وكان دوره ${ROLES[target.role].name}.`;
 
-    // تجهيز صوت نتيجة التصويت
-    prefetch(text);
+    addToPrefetchQueue([
+      text,
+    ]);
 
     setVoteResult(text);
 
@@ -849,6 +795,10 @@ function MafiaGame() {
     });
   }
 
+  /* =========================================================
+     END
+     ========================================================= */
+
   function endGame(
     w: "mafia" | "town",
   ) {
@@ -857,7 +807,9 @@ function MafiaGame() {
         ? "انتهت اللعبة. المافيا سيطرت على المدينة، الفوز للمافيا!"
         : "انتهت اللعبة. تم القضاء على كل أفراد المافيا، الفوز للمدينة!";
 
-    prefetch(text);
+    addToPrefetchQueue([
+      text,
+    ]);
 
     setWinner(w);
     setPhase("end");
@@ -878,7 +830,9 @@ function MafiaGame() {
   const currentStep =
     nightSteps[stepIndex];
 
-  /* ---------------- UI ---------------- */
+  /* =========================================================
+     UI
+     ========================================================= */
 
   return (
     <div
@@ -1018,8 +972,11 @@ function MafiaGame() {
 
                 <span className="text-xs text-muted-foreground">
                   المقترح:{" "}
-                  {suggestedMafia(
-                    playerCount,
+                  {Math.max(
+                    1,
+                    Math.round(
+                      playerCount / 4,
+                    ),
                   )}
                 </span>
               </div>
@@ -1520,6 +1477,10 @@ function MafiaGame() {
   );
 }
 
+/* =========================================================
+   PLAYER PICKER
+   ========================================================= */
+
 function PlayerPicker({
   players,
   selected,
@@ -1581,6 +1542,10 @@ function PlayerPicker({
     </div>
   );
 }
+
+/* =========================================================
+   STEP BUTTON
+   ========================================================= */
 
 function StepBtn({
   label,
