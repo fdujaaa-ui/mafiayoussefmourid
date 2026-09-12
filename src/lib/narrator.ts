@@ -1,12 +1,12 @@
 // Mafia Arabic narrator — Google Gemini Charon via Cloudflare Worker.
-// No Lovable TTS and no local/browser voice fallback.
+// Charon only. No Lovable TTS, no browser voice, no Piper.
 
 let ctx: AudioContext | null = null;
 
 const cache = new Map<string, Float32Array>();
 const inflight = new Map<string, Promise<Float32Array>>();
 
-let activeSources: AudioBufferSourceNode[] = [];
+let activeSource: AudioBufferSourceNode | null = null;
 let generation = 0;
 let pendingCompletion: (() => void) | null = null;
 
@@ -87,28 +87,17 @@ async function saveAudio(
     const db = await openAudioDB();
 
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(
-        DB_STORE,
-        "readwrite",
-      );
+      const tx = db.transaction(DB_STORE, "readwrite");
 
-      tx.objectStore(DB_STORE).put(
-        samples,
-        text,
-      );
+      tx.objectStore(DB_STORE).put(samples, text);
 
-      tx.oncomplete = () => {
-        resolve();
-      };
-
-      tx.onerror = () => {
-        reject(tx.error);
-      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
     });
 
     db.close();
   } catch {
-    // Memory cache still works if IndexedDB is unavailable.
+    // Memory cache remains available.
   }
 }
 
@@ -180,15 +169,15 @@ export function stopSpeaking(
 ) {
   generation++;
 
-  for (const source of activeSources) {
+  if (activeSource) {
     try {
-      source.stop();
+      activeSource.stop();
     } catch {
-      // Ignore already stopped sources.
+      // Already stopped.
     }
-  }
 
-  activeSources = [];
+    activeSource = null;
+  }
 
   const completion = pendingCompletion;
   pendingCompletion = null;
@@ -226,31 +215,8 @@ function pcmToFloat(
   return out;
 }
 
-function concat(
-  chunks: Float32Array[],
-): Float32Array {
-  const total = chunks.reduce(
-    (n, c) => n + c.length,
-    0,
-  );
-
-  const out = new Float32Array(total);
-
-  let offset = 0;
-
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.length;
-  }
-
-  return out;
-}
-
 async function fetchAudio(
   text: string,
-  onChunk?: (
-    chunk: Float32Array,
-  ) => void,
 ): Promise<Float32Array> {
   const cleanText = text.trim();
 
@@ -258,35 +224,31 @@ async function fetchAudio(
     throw new Error("النص فارغ.");
   }
 
-  // 1. Memory cache
+  // 1. Fast memory cache.
   const memoryCached =
     cache.get(cleanText);
 
   if (memoryCached) {
-    onChunk?.(memoryCached);
     return memoryCached;
   }
 
-  // 2. Device cache
+  // 2. Device cache.
   const deviceCached =
     await loadAudio(cleanText);
 
   if (deviceCached) {
-    onChunk?.(deviceCached);
     return deviceCached;
   }
 
-  // 3. Prevent duplicate requests
+  // 3. Avoid duplicate requests.
   const running =
     inflight.get(cleanText);
 
   if (running) {
-    const samples = await running;
-    onChunk?.(samples);
-    return samples;
+    return running;
   }
 
-  // 4. Google Gemini Charon through Cloudflare Worker
+  // 4. Request Charon from Cloudflare Worker.
   const task = (async () => {
     const response = await fetch(
       WORKER_URL,
@@ -325,25 +287,7 @@ async function fetchAudio(
 
     const chunks: Float32Array[] = [];
 
-    let playbackChunks: Float32Array[] = [];
-    let playbackSamples = 0;
-
     let tail = new Uint8Array(0);
-
-    let receivedDone = false;
-
-    const flushPlayback = () => {
-      if (!playbackSamples) {
-        return;
-      }
-
-      onChunk?.(
-        concat(playbackChunks),
-      );
-
-      playbackChunks = [];
-      playbackSamples = 0;
-    };
 
     for (;;) {
       const { value, done } =
@@ -389,14 +333,6 @@ async function fetchAudio(
         }
 
         if (
-          payload.type ===
-          "speech.audio.done"
-        ) {
-          receivedDone = true;
-          continue;
-        }
-
-        if (
           payload.type !==
             "speech.audio.delta" ||
           !payload.audio
@@ -434,57 +370,50 @@ async function fetchAudio(
           raw.slice(usable);
 
         if (usable > 0) {
-          const chunk =
+          chunks.push(
             pcmToFloat(
               raw.subarray(
                 0,
                 usable,
               ),
-            );
-
-          chunks.push(chunk);
-
-          playbackChunks.push(
-            chunk,
+            ),
           );
-
-          playbackSamples +=
-            chunk.length;
-
-          if (
-            playbackSamples >=
-            SAMPLE_RATE * 0.16
-          ) {
-            flushPlayback();
-          }
         }
       }
     }
 
-    flushPlayback();
+    const totalLength =
+      chunks.reduce(
+        (total, chunk) =>
+          total + chunk.length,
+        0,
+      );
 
-    const merged =
-      concat(chunks);
-
-    if (!merged.length) {
+    if (!totalLength) {
       throw new Error(
         "لم يتم استلام صوت Charon.",
       );
     }
 
-    if (!receivedDone) {
-      throw new Error(
-        "انقطع اتصال صوت Charon قبل اكتمال الجملة.",
+    const merged =
+      new Float32Array(
+        totalLength,
       );
+
+    let offset = 0;
+
+    for (const chunk of chunks) {
+      merged.set(chunk, offset);
+      offset += chunk.length;
     }
 
-    // Save generated Charon audio on this device.
     cache.set(
       cleanText,
       merged,
     );
 
-    await saveAudio(
+    // Save without blocking playback.
+    void saveAudio(
       cleanText,
       merged,
     );
@@ -587,14 +516,7 @@ export function speak(
 
   if (muted) {
     window.setTimeout(
-      () => {
-        if (
-          myGeneration ===
-          generation
-        ) {
-          complete();
-        }
-      },
+      complete,
       Math.min(
         4000,
         400 +
@@ -616,109 +538,12 @@ export function speak(
     return;
   }
 
-  if (
-    c.state === "suspended"
-  ) {
-    void c.resume().catch(
-      () => {},
-    );
+  if (c.state === "suspended") {
+    void c.resume().catch(() => {});
   }
 
-  let started = false;
-  let streamFinished =
-    false;
-
-  let scheduled = 0;
-  let playhead = 0;
-
-  const finish = () => {
-    if (
-      myGeneration !==
-        generation ||
-      !streamFinished ||
-      scheduled > 0
-    ) {
-      return;
-    }
-
-    complete();
-  };
-
-  const schedule = (
-    samples: Float32Array,
-  ) => {
-    if (
-      myGeneration !==
-        generation ||
-      completed ||
-      !samples.length
-    ) {
-      return;
-    }
-
-    started = true;
-
-    const audioBuffer =
-      c.createBuffer(
-        1,
-        samples.length,
-        SAMPLE_RATE,
-      );
-
-    audioBuffer.copyToChannel(
-      samples as Float32Array<ArrayBuffer>,
-      0,
-    );
-
-    const source =
-      c.createBufferSource();
-
-    source.buffer =
-      audioBuffer;
-
-    source.connect(
-      c.destination,
-    );
-
-    scheduled++;
-
-    source.onended = () => {
-      scheduled--;
-
-      activeSources =
-        activeSources.filter(
-          (item) =>
-            item !== source,
-        );
-
-      finish();
-    };
-
-    playhead =
-      playhead === 0
-        ? c.currentTime + 0.05
-        : Math.max(
-            playhead,
-            c.currentTime,
-          );
-
-    source.start(
-      playhead,
-    );
-
-    playhead +=
-      audioBuffer.duration;
-
-    activeSources.push(
-      source,
-    );
-  };
-
-  fetchAudio(
-    text,
-    schedule,
-  )
-    .then(() => {
+  fetchAudio(text)
+    .then((samples) => {
       if (
         myGeneration !==
           generation ||
@@ -727,22 +552,52 @@ export function speak(
         return;
       }
 
-      streamFinished = true;
-
-      finish();
-
-      if (scheduled > 0) {
-        window.setTimeout(
-          complete,
-          Math.max(
-            1000,
-            (playhead -
-              c.currentTime) *
-              1000 +
-              1200,
-          ),
-        );
+      if (!samples.length) {
+        complete();
+        return;
       }
+
+      const audioBuffer =
+        c.createBuffer(
+          1,
+          samples.length,
+          SAMPLE_RATE,
+        );
+
+      audioBuffer.copyToChannel(
+        samples,
+        0,
+      );
+
+      const source =
+        c.createBufferSource();
+
+      source.buffer =
+        audioBuffer;
+
+      source.connect(
+        c.destination,
+      );
+
+      activeSource =
+        source;
+
+      source.onended = () => {
+        if (
+          activeSource ===
+          source
+        ) {
+          activeSource = null;
+        }
+
+        complete();
+      };
+
+      // Start almost immediately.
+      // Only a tiny safety offset is used.
+      source.start(
+        c.currentTime + 0.015,
+      );
     })
     .catch(
       (error: unknown) => {
@@ -763,14 +618,7 @@ export function speak(
           message,
         );
 
-        if (!started) {
-          complete();
-        } else {
-          streamFinished =
-            true;
-
-          finish();
-        }
+        complete();
       },
     );
 }
