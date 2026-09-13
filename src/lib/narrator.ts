@@ -1,7 +1,6 @@
-// Mafia Arabic narrator — Google Gemini Charon via Cloudflare Worker.
-// Charon only.
-// Generated audio is permanently cached on the device using IndexedDB.
-// Once an audio phrase is saved, playing it does NOT call Gemini.
+// Mafia Arabic narrator — Charon via Cloudflare Worker
+// Gemini is used ONLY when preparing/saving a voice.
+// During normal gameplay, speak() uses IndexedDB only.
 
 let ctx: AudioContext | null = null;
 
@@ -85,9 +84,9 @@ async function saveAudio(
     return;
   }
 
-  try {
-    const db = await openAudioDB();
+  const db = await openAudioDB();
 
+  try {
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(
         DB_STORE,
@@ -96,19 +95,15 @@ async function saveAudio(
 
       tx.objectStore(DB_STORE).put(
         samples,
-        text,
+        text.trim(),
       );
 
       tx.oncomplete = () => resolve();
-
-      tx.onerror = () => {
-        reject(tx.error);
-      };
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
     });
-
+  } finally {
     db.close();
-  } catch {
-    // Memory cache remains available.
   }
 }
 
@@ -121,8 +116,10 @@ async function loadAudio(
     return null;
   }
 
-  if (cache.has(cleanText)) {
-    return cache.get(cleanText)!;
+  const memory = cache.get(cleanText);
+
+  if (memory) {
+    return memory;
   }
 
   if (typeof window === "undefined") {
@@ -132,50 +129,52 @@ async function loadAudio(
   try {
     const db = await openAudioDB();
 
-    const result =
-      await new Promise<Float32Array | null>(
-        (resolve, reject) => {
-          const tx = db.transaction(
-            DB_STORE,
-            "readonly",
-          );
-
-          const request =
-            tx.objectStore(DB_STORE).get(
-              cleanText,
+    try {
+      const result =
+        await new Promise<Float32Array | null>(
+          (resolve, reject) => {
+            const tx = db.transaction(
+              DB_STORE,
+              "readonly",
             );
 
-          request.onsuccess = () => {
-            const value = request.result;
-
-            if (value instanceof Float32Array) {
-              resolve(value);
-              return;
-            }
-
-            if (value instanceof ArrayBuffer) {
-              resolve(
-                new Float32Array(value),
+            const request =
+              tx.objectStore(DB_STORE).get(
+                cleanText,
               );
-              return;
-            }
 
-            resolve(null);
-          };
+            request.onsuccess = () => {
+              const value = request.result;
 
-          request.onerror = () => {
-            reject(request.error);
-          };
-        },
-      );
+              if (value instanceof Float32Array) {
+                resolve(value);
+                return;
+              }
 
-    db.close();
+              if (value instanceof ArrayBuffer) {
+                resolve(
+                  new Float32Array(value),
+                );
+                return;
+              }
 
-    if (result) {
-      cache.set(cleanText, result);
+              resolve(null);
+            };
+
+            request.onerror = () => {
+              reject(request.error);
+            };
+          },
+        );
+
+      if (result) {
+        cache.set(cleanText, result);
+      }
+
+      return result;
+    } finally {
+      db.close();
     }
-
-    return result;
   } catch {
     return null;
   }
@@ -204,8 +203,7 @@ export function stopSpeaking(
     activeSource = null;
   }
 
-  const completion =
-    pendingCompletion;
+  const completion = pendingCompletion;
 
   pendingCompletion = null;
 
@@ -242,6 +240,11 @@ function pcmToFloat(
   return out;
 }
 
+/*
+ * Gemini / Charon generator.
+ *
+ * THIS FUNCTION IS USED ONLY DURING VOICE-PACK PREPARATION.
+ */
 async function requestCharonAudio(
   text: string,
 ): Promise<Float32Array> {
@@ -272,7 +275,7 @@ async function requestCharonAudio(
 
     throw new NarratorRequestError(
       detail ||
-        `تعذّر تشغيل صوت Charon (${response.status})`,
+        `تعذّر إنشاء صوت Charon (${response.status})`,
       response.status,
     );
   }
@@ -411,42 +414,24 @@ async function requestCharonAudio(
   return merged;
 }
 
-/**
- * Gets audio from the device first.
+/*
+ * PREPARATION ONLY
  *
- * IMPORTANT:
- * If the phrase already exists in IndexedDB,
- * Gemini is NOT contacted.
- *
- * Gemini is contacted only when the exact phrase
- * has never been saved on this device.
+ * Generates one new Charon voice and saves it
+ * permanently in IndexedDB.
  */
-async function fetchAudio(
+async function generateAndSaveVoice(
   text: string,
 ): Promise<Float32Array> {
   const cleanText = text.trim();
 
-  if (!cleanText) {
-    throw new Error("النص فارغ.");
-  }
-
-  // 1. Fast memory cache.
-  const memoryCached =
-    cache.get(cleanText);
-
-  if (memoryCached) {
-    return memoryCached;
-  }
-
-  // 2. Permanent device cache.
-  const deviceCached =
+  const existing =
     await loadAudio(cleanText);
 
-  if (deviceCached) {
-    return deviceCached;
+  if (existing) {
+    return existing;
   }
 
-  // 3. Avoid duplicate Gemini requests.
   const running =
     inflight.get(cleanText);
 
@@ -454,26 +439,25 @@ async function fetchAudio(
     return running;
   }
 
-  // 4. Only now contact Cloudflare/Gemini.
-  const task = (async () => {
-    const samples =
-      await requestCharonAudio(
+  const task =
+    (async () => {
+      const samples =
+        await requestCharonAudio(
+          cleanText,
+        );
+
+      cache.set(
         cleanText,
+        samples,
       );
 
-    cache.set(
-      cleanText,
-      samples,
-    );
+      await saveAudio(
+        cleanText,
+        samples,
+      );
 
-    // Save permanently on the device.
-    await saveAudio(
-      cleanText,
-      samples,
-    );
-
-    return samples;
-  })();
+      return samples;
+    })();
 
   inflight.set(
     cleanText,
@@ -489,42 +473,8 @@ async function fetchAudio(
   }
 }
 
-export async function prepareVoice(
-  text: string,
-): Promise<boolean> {
-  const cleanText = text.trim();
-
-  if (!cleanText) {
-    return false;
-  }
-
-  try {
-    await fetchAudio(
-      cleanText,
-    );
-
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export function prefetch(
-  text: string,
-) {
-  const cleanText = text.trim();
-
-  if (!cleanText) {
-    return;
-  }
-
-  void fetchAudio(
-    cleanText,
-  ).catch(() => {});
-}
-
 /* =========================================================
-   SAVED MAFIA PLAYER NAMES
+   SAVED NAMES
    ========================================================= */
 
 export const SAVED_PLAYER_NAMES = [
@@ -538,14 +488,11 @@ export const SAVED_PLAYER_NAMES = [
 ] as const;
 
 /* =========================================================
-   STATIC CHARON VOICE PACK
+   VOICE PACK
    ========================================================= */
 
 const STATIC_VOICE_PACK = [
   "بدأ توزيع الأدوار.",
-  "أمسك الهاتف الآن وتأكد أن لا أحد يرى الشاشة.",
-  "أمسك الهاتف الآن وحدك، واستعد لرؤية دورك بسرية.",
-
   "الليلة بدأت. المدينة تنام الآن. الجميع يغمض عينيه.",
 
   "المافيا، افتحوا أعينكم. تعرّفوا على بعضكم، ثم اختاروا ضحيتكم.",
@@ -563,28 +510,17 @@ const STATIC_VOICE_PACK = [
 
   "حان وقت التصويت. اختاروا من تشكّون أنه من المافيا.",
 
-  "انتهى تصويت أهل المدينة.",
-  "خرج من اللعبة.",
-  "انتهت اللعبة.",
-  "فازت المافيا.",
-  "فاز أهل المدينة.",
+  "نعم، هذا الشخص من المافيا.",
+  "لا، هذا الشخص بريء.",
+
+  "انتهت اللعبة. المافيا سيطرت على المدينة، الفوز للمافيا!",
+  "انتهت اللعبة. تم القضاء على كل أفراد المافيا، الفوز للمدينة!",
 ] as const;
 
-/* =========================================================
-   PREPARE ALL SAVED CHARRON VOICES
-   ========================================================= */
-
-/**
- * Generates and saves the Voice Pack on the device.
+/*
+ * Generates ALL phrases needed by the current game.
  *
- * This should be used ONCE while the phone has internet.
- *
- * IMPORTANT:
- * Gemini's free TTS quota is limited, so requests are
- * deliberately spaced out.
- *
- * After a phrase is saved, it is skipped forever on this
- * device unless its exact text changes.
+ * This is the ONLY function that should consume Gemini.
  */
 export async function prepareVoicePack(
   onProgress?: (
@@ -595,18 +531,17 @@ export async function prepareVoicePack(
   const texts =
     new Set<string>();
 
-  // Player names.
-  for (const name of SAVED_PLAYER_NAMES) {
-    texts.add(name);
-  }
-
-  // Static game phrases.
-  for (const text of STATIC_VOICE_PACK) {
+  for (
+    const text of STATIC_VOICE_PACK
+  ) {
     texts.add(text);
   }
 
-  // Exact phrases containing the saved player names.
-  for (const name of SAVED_PLAYER_NAMES) {
+  for (
+    const name of SAVED_PLAYER_NAMES
+  ) {
+    texts.add(name);
+
     texts.add(
       `${name}، أمسك الهاتف الآن وحدك، واستعد لرؤية دورك بسرية.`,
     );
@@ -616,60 +551,66 @@ export async function prepareVoicePack(
     );
 
     texts.add(
-      `مع شروق الشمس، وُجد ${name} مقتولاً على يد المافيا.`,
+      `مع شروق الشمس، وُجد ${name} مقتولاً على يد المافيا. خرج من اللعبة، وكان دوره.`,
     );
 
     texts.add(
-      `هاجمت المافيا ${name}، لكن الطبيب أنقذه.`,
+      `هاجمت المافيا ${name}، لكن الطبيب أنقذه في اللحظة الأخيرة. لم يمت أحد هذه الليلة.`,
     );
 
     texts.add(
-      `تم إخراج ${name} من اللعبة.`,
+      `انتهى تصويت أهل المدينة. تم إخراج ${name} من اللعبة، وكان دوره.`,
     );
   }
 
-  const list =
-    [...texts];
+  const list = [
+    ...texts,
+  ];
 
   const total =
     list.length;
 
   let current = 0;
 
-  for (const text of list) {
+  for (
+    const text of list
+  ) {
     const cleanText =
       text.trim();
 
     if (!cleanText) {
       current++;
-
       onProgress?.(
         current,
         total,
       );
-
       continue;
     }
 
-    // Check device FIRST.
-    const alreadySaved =
+    /*
+     * IMPORTANT:
+     * If already saved, Gemini is NOT called.
+     */
+    const saved =
       await loadAudio(
         cleanText,
       );
 
-    if (!alreadySaved) {
-      // This is the ONLY place where a new Gemini
-      // generation happens during preparation.
-      await fetchAudio(
+    if (!saved) {
+      /*
+       * Generate ONE new Charon voice.
+       */
+      await generateAndSaveVoice(
         cleanText,
       );
 
-      // Gemini free tier is limited to about
-      // 3 TTS requests per minute in the current setup.
-      // Wait before generating another NEW phrase.
+      /*
+       * Stay below the Gemini free-tier
+       * request limit.
+       */
       await new Promise(
         (resolve) =>
-          setTimeout(
+          window.setTimeout(
             resolve,
             22000,
           ),
@@ -686,7 +627,32 @@ export async function prepareVoicePack(
 }
 
 /* =========================================================
-   SPEAK
+   PREPARE ONE VOICE
+   ========================================================= */
+
+export async function prepareVoice(
+  text: string,
+): Promise<boolean> {
+  const cleanText =
+    text.trim();
+
+  if (!cleanText) {
+    return false;
+  }
+
+  try {
+    await generateAndSaveVoice(
+      cleanText,
+    );
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/* =========================================================
+   LOCAL-ONLY SPEAK
    ========================================================= */
 
 export type SpeakOptions = {
@@ -699,6 +665,18 @@ export type SpeakOptions = {
   ) => void;
 };
 
+/*
+ * IMPORTANT:
+ *
+ * speak() DOES NOT call Gemini.
+ *
+ * It ONLY searches:
+ *   1. memory
+ *   2. IndexedDB
+ *
+ * If the phrase isn't saved,
+ * it shows an error instead of contacting Gemini.
+ */
 export function speak(
   text: string,
   opts: SpeakOptions = {},
@@ -774,16 +752,13 @@ export function speak(
   }
 
   /*
-   * fetchAudio() checks:
+   * LOCAL ONLY.
    *
-   * 1. Memory
-   * 2. IndexedDB on the phone
-   * 3. Only if missing -> Cloudflare -> Gemini
-   *
-   * Therefore saved phrases do not consume
-   * Gemini requests during normal gameplay.
+   * NO Gemini.
+   * NO Cloudflare.
+   * NO Internet request.
    */
-  fetchAudio(
+  loadAudio(
     cleanText,
   )
     .then(
@@ -793,6 +768,15 @@ export function speak(
             generation ||
           completed
         ) {
+          return;
+        }
+
+        if (!samples) {
+          onError?.(
+            "هذا الصوت غير محفوظ بعد. اضغط «تحميل أصوات Charon» مرة واحدة بالإنترنت.",
+          );
+
+          complete();
           return;
         }
 
@@ -844,7 +828,7 @@ export function speak(
       },
     )
     .catch(
-      (error: unknown) => {
+      () => {
         if (
           myGeneration !==
             generation ||
@@ -853,13 +837,8 @@ export function speak(
           return;
         }
 
-        const message =
-          error instanceof Error
-            ? error.message
-            : "تعذّر تشغيل صوت Charon.";
-
         onError?.(
-          message,
+          "تعذّر تشغيل الصوت المحفوظ.",
         );
 
         complete();
