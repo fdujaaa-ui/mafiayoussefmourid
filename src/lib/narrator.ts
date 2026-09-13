@@ -793,7 +793,7 @@ export function speak(
           );
 
         audioBuffer.copyToChannel(
-          samples,
+          new Float32Array(samples),
           0,
         );
 
