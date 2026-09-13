@@ -241,7 +241,7 @@ function MafiaGame() {
       await prepareVoicePack(
         (current, total) => {
           setPackProgress(
-            `جاري حفظ صوت Charon... ${current} / ${total}`,
+            `جاري تحميل الصوت ${current} من ${total}...`,
           );
         },
       );
@@ -250,10 +250,14 @@ function MafiaGame() {
       setPackProgress(
         "✅ حزمة أصوات Charon محفوظة على الهاتف",
       );
-    } catch {
-      setPackProgress(
-        "❌ تعذر إكمال تحميل حزمة الأصوات.",
-      );
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "تعذر إكمال تحميل حزمة الأصوات.";
+
+      setPackProgress(`❌ ${message}`);
+      setVoiceError(message);
     } finally {
       setPackLoading(false);
     }
