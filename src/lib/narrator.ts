@@ -254,29 +254,49 @@ async function requestCharonAudio(
     throw new Error("النص فارغ.");
   }
 
-  const response = await fetch(
-    WORKER_URL,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        text: cleanText,
-      }),
-    },
-  );
+  let response: Response | null = null;
+  let lastError: NarratorRequestError | null = null;
 
-  if (!response.ok || !response.body) {
-    const detail =
-      await response.text().catch(
-        () => "",
+  // Try the app's own voice route first (it falls back to a second
+  // voice provider), then the Cloudflare Worker.
+  for (const url of ["/api/tts", WORKER_URL]) {
+    let attempt: Response;
+
+    try {
+      attempt = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          text: cleanText,
+        }),
+      });
+    } catch {
+      lastError = new NarratorRequestError(
+        "تعذّر الاتصال بخدمة الصوت.",
+        0,
       );
+      continue;
+    }
 
-    throw new NarratorRequestError(
-      detail ||
-        `تعذّر إنشاء صوت Charon (${response.status})`,
-      response.status,
+    if (attempt.ok && attempt.body) {
+      response = attempt;
+      break;
+    }
+
+    const detail = await attempt.text().catch(() => "");
+
+    lastError = new NarratorRequestError(
+      detail || `تعذّر إنشاء صوت Charon (${attempt.status})`,
+      attempt.status,
+    );
+  }
+
+  if (!response || !response.body) {
+    throw (
+      lastError ??
+      new NarratorRequestError("تعذّر إنشاء صوت Charon.", 500)
     );
   }
 
