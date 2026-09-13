@@ -528,18 +528,13 @@ export async function prepareVoicePack(
     total: number,
   ) => void,
 ): Promise<void> {
-  const texts =
-    new Set<string>();
+  const texts = new Set<string>();
 
-  for (
-    const text of STATIC_VOICE_PACK
-  ) {
+  for (const text of STATIC_VOICE_PACK) {
     texts.add(text);
   }
 
-  for (
-    const name of SAVED_PLAYER_NAMES
-  ) {
+  for (const name of SAVED_PLAYER_NAMES) {
     texts.add(name);
 
     texts.add(
@@ -563,66 +558,71 @@ export async function prepareVoicePack(
     );
   }
 
-  const list = [
-    ...texts,
-  ];
+  const list = [...texts].filter(
+    (text) => text.trim().length > 0,
+  );
 
-  const total =
-    list.length;
+  const total = list.length;
 
-  let current = 0;
+  const wait = (ms: number) =>
+    new Promise<void>((resolve) => {
+      window.setTimeout(resolve, ms);
+    });
 
-  for (
-    const text of list
-  ) {
-    const cleanText =
-      text.trim();
+  let sentRequest = false;
 
-    if (!cleanText) {
-      current++;
-      onProgress?.(
-        current,
-        total,
-      );
+  for (let index = 0; index < total; index++) {
+    const cleanText = list[index]!.trim();
+
+    onProgress?.(index + 1, total);
+
+    // Already saved on the device → never call Gemini again.
+    const saved = await loadAudio(cleanText);
+
+    if (saved) {
       continue;
     }
 
-    /*
-     * IMPORTANT:
-     * If already saved, Gemini is NOT called.
-     */
-    const saved =
-      await loadAudio(
-        cleanText,
-      );
-
-    if (!saved) {
-      /*
-       * Generate ONE new Charon voice.
-       */
-      await generateAndSaveVoice(
-        cleanText,
-      );
-
-      /*
-       * Stay below the Gemini free-tier
-       * request limit.
-       */
-      await new Promise(
-        (resolve) =>
-          window.setTimeout(
-            resolve,
-            22000,
-          ),
-      );
+    // One request at a time, 25s apart.
+    if (sentRequest) {
+      await wait(25000);
     }
 
-    current++;
+    let lastError: unknown = null;
 
-    onProgress?.(
-      current,
-      total,
-    );
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        sentRequest = true;
+
+        await generateAndSaveVoice(cleanText);
+
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+
+        const status =
+          error instanceof NarratorRequestError
+            ? error.status
+            : 0;
+
+        if (attempt < 3) {
+          await wait(status === 429 ? 30000 : 25000);
+          continue;
+        }
+      }
+    }
+
+    if (lastError) {
+      const message =
+        lastError instanceof Error
+          ? lastError.message
+          : "تعذّر إنشاء الصوت.";
+
+      throw new Error(
+        `فشل الصوت ${index + 1} من ${total}: ${message}`,
+      );
+    }
   }
 }
 
@@ -793,7 +793,7 @@ export function speak(
           );
 
         audioBuffer.copyToChannel(
-          samples,
+          new Float32Array(samples),
           0,
         );
 
