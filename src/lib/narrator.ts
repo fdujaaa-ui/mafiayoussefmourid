@@ -494,6 +494,99 @@ async function generateAndSaveVoice(
 }
 
 /* =========================================================
+   LOCAL ARABIC MALE VOICE (no quota, no credits)
+   ========================================================= */
+
+const LOCAL_VOICE = "ar_JO-kareem-medium";
+
+let localReady: Promise<
+  typeof import("@mintplex-labs/piper-tts-web")
+> | null = null;
+
+async function getLocalEngine() {
+  if (!localReady) {
+    localReady = (async () => {
+      const tts = await import(
+        "@mintplex-labs/piper-tts-web"
+      );
+
+      const stored = (await tts.stored()) as string[];
+
+      if (!stored.includes(LOCAL_VOICE)) {
+        await tts.download(LOCAL_VOICE, () => {});
+      }
+
+      return tts;
+    })();
+  }
+
+  return localReady;
+}
+
+async function blobToSamples(
+  blob: Blob,
+): Promise<Float32Array> {
+  const bytes = await blob.arrayBuffer();
+
+  const decodeCtx =
+    getCtx() ??
+    (null as unknown as AudioContext);
+
+  if (!decodeCtx) {
+    throw new Error("تعذّر تشغيل الصوت المحلي.");
+  }
+
+  const decoded =
+    await decodeCtx.decodeAudioData(bytes.slice(0));
+
+  if (decoded.sampleRate === SAMPLE_RATE) {
+    return decoded.getChannelData(0).slice();
+  }
+
+  const length = Math.ceil(
+    (decoded.length * SAMPLE_RATE) /
+      decoded.sampleRate,
+  );
+
+  const offline = new OfflineAudioContext(
+    1,
+    length,
+    SAMPLE_RATE,
+  );
+
+  const source = offline.createBufferSource();
+
+  source.buffer = decoded;
+  source.connect(offline.destination);
+  source.start();
+
+  const rendered = await offline.startRendering();
+
+  return rendered.getChannelData(0).slice();
+}
+
+async function generateLocalAndSaveVoice(
+  text: string,
+): Promise<Float32Array> {
+  const cleanText = text.trim();
+
+  const tts = await getLocalEngine();
+
+  const blob = await tts.predict({
+    text: cleanText,
+    voiceId: LOCAL_VOICE,
+  });
+
+  const samples = await blobToSamples(blob as Blob);
+
+  cache.set(cleanText, samples);
+
+  await saveAudio(cleanText, samples);
+
+  return samples;
+}
+
+/* =========================================================
    SAVED NAMES
    ========================================================= */
 
