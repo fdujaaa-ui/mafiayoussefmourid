@@ -16,10 +16,10 @@ import {
 } from "@/lib/mafia";
 import {
   initNarrator,
-  prepareVoicePack,
   speak,
   stopSpeaking,
 } from "@/lib/narrator";
+
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -147,14 +147,6 @@ function MafiaGame() {
   const [voiceError, setVoiceError] =
     useState<string | null>(null);
 
-  const [packLoading, setPackLoading] =
-    useState(false);
-
-  const [packProgress, setPackProgress] =
-    useState("");
-
-  const [packReady, setPackReady] =
-    useState(false);
 
   const timerRef =
     useRef<number | null>(null);
@@ -221,47 +213,6 @@ function MafiaGame() {
       ),
     );
 
-  /* =========================================================
-     VOICE PACK
-     ========================================================= */
-
-  async function downloadVoicePack() {
-    if (packLoading) {
-      return;
-    }
-
-    setPackLoading(true);
-    setPackReady(false);
-    setVoiceError(null);
-    setPackProgress(
-      "يتم تجهيز أصوات Charon...",
-    );
-
-    try {
-      await prepareVoicePack(
-        (current, total) => {
-          setPackProgress(
-            `جاري تحميل الصوت ${current} من ${total}...`,
-          );
-        },
-      );
-
-      setPackReady(true);
-      setPackProgress(
-        "✅ حزمة أصوات Charon محفوظة على الهاتف",
-      );
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "تعذر إكمال تحميل حزمة الأصوات.";
-
-      setPackProgress(`❌ ${message}`);
-      setVoiceError(message);
-    } finally {
-      setPackLoading(false);
-    }
-  }
 
   /* =========================================================
      NIGHT STEPS
@@ -940,7 +891,7 @@ function MafiaGame() {
               </p>
             </div>
 
-            {/* VOICE PACK */}
+            {/* VOICE */}
             <div className="rounded-2xl border border-primary/30 bg-primary/5 p-4">
               <div className="flex items-start gap-3">
                 <div className="text-3xl">
@@ -949,41 +900,17 @@ function MafiaGame() {
 
                 <div className="min-w-0 flex-1">
                   <h3 className="font-extrabold">
-                    صوت Charon
+                    الراوي الصوتي
                   </h3>
 
                   <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                    حمّل أصوات اللعبة مرة واحدة واحفظها على الهاتف. بعد ذلك لن تحتاج اللعبة إلى Gemini أثناء تشغيل الأصوات المحفوظة.
+                    الصوت يعمل تلقائياً أثناء اللعب. ومع الإنترنت يستعمل صوت Charon، وإن لم يتوفر ينتقل فوراً لصوت رجالي داخل الهاتف بدون رصيد.
                   </p>
                 </div>
               </div>
-
-              <button
-                onClick={
-                  downloadVoicePack
-                }
-                disabled={
-                  packLoading
-                }
-                className="gold-fill mt-4 w-full rounded-xl py-3 font-extrabold transition active:scale-95 disabled:opacity-50"
-              >
-                {packLoading
-                  ? "جاري تحميل الأصوات..."
-                  : packReady
-                    ? "✅ أصوات Charon محفوظة"
-                    : "🎙️ تحميل أصوات Charon"}
-              </button>
-
-              {packProgress && (
-                <p className="mt-3 text-center text-xs font-bold text-muted-foreground">
-                  {packProgress}
-                </p>
-              )}
-
-              <p className="mt-3 text-center text-[11px] text-muted-foreground">
-                الأسماء المحفوظة: يوسف • زكرياء • هاجر • مريم • أحلام • أسماء • عمر
-              </p>
             </div>
+
+
 
             <div className="player-count-panel rounded-2xl border p-4 sm:p-5">
               <div className="mb-4 flex items-center justify-between gap-3">
