@@ -601,168 +601,71 @@ export const SAVED_PLAYER_NAMES = [
 ] as const;
 
 /* =========================================================
-   VOICE PACK
+   ON-DEMAND VOICE
+   =========================================================
+   1. saved on device  → play instantly
+   2. Charon (cloud)   → generate + save
+   3. local male voice → free fallback, no credits
    ========================================================= */
 
-const STATIC_VOICE_PACK = [
-  "بدأ توزيع الأدوار.",
-  "الليلة بدأت. المدينة تنام الآن. الجميع يغمض عينيه.",
+async function getVoiceSamples(
+  text: string,
+): Promise<Float32Array> {
+  const cleanText = text.trim();
 
-  "المافيا، افتحوا أعينكم. تعرّفوا على بعضكم، ثم اختاروا ضحيتكم.",
-  "المافيا، أغمضوا أعينكم.",
+  const saved = await loadAudio(cleanText);
 
-  "الطبيب، افتح عينيك. من تريد أن تنقذ هذه الليلة؟",
-  "الطبيب، أغمض عينيك.",
-
-  "المحقق، افتح عينيك. من تشك فيه هذه الليلة؟",
-  "المحقق، أغمض عينيك.",
-
-  "انتهى الليل. أشرقت الشمس، افتحوا أعينكم جميعاً.",
-
-  "مرّت الليلة بسلام، لم يمت أحد هذه الليلة.",
-
-  "حان وقت التصويت. اختاروا من تشكّون أنه من المافيا.",
-
-  "نعم، هذا الشخص من المافيا.",
-  "لا، هذا الشخص بريء.",
-
-  "انتهت اللعبة. المافيا سيطرت على المدينة، الفوز للمافيا!",
-  "انتهت اللعبة. تم القضاء على كل أفراد المافيا، الفوز للمدينة!",
-] as const;
-
-/*
- * Generates ALL phrases needed by the current game.
- *
- * This is the ONLY function that should consume Gemini.
- */
-export async function prepareVoicePack(
-  onProgress?: (
-    current: number,
-    total: number,
-  ) => void,
-): Promise<void> {
-  const texts = new Set<string>();
-
-  for (const text of STATIC_VOICE_PACK) {
-    texts.add(text);
+  if (saved) {
+    return saved;
   }
 
-  for (const name of SAVED_PLAYER_NAMES) {
-    texts.add(name);
+  const running = inflight.get(cleanText);
 
-    texts.add(
-      `${name}، أمسك الهاتف الآن وحدك، واستعد لرؤية دورك بسرية.`,
-    );
-
-    texts.add(
-      `${name}، أمسك الهاتف الآن وتأكد أن لا أحد يرى الشاشة.`,
-    );
-
-    texts.add(
-      `مع شروق الشمس، وُجد ${name} مقتولاً على يد المافيا. خرج من اللعبة، وكان دوره.`,
-    );
-
-    texts.add(
-      `هاجمت المافيا ${name}، لكن الطبيب أنقذه في اللحظة الأخيرة. لم يمت أحد هذه الليلة.`,
-    );
-
-    texts.add(
-      `انتهى تصويت أهل المدينة. تم إخراج ${name} من اللعبة، وكان دوره.`,
-    );
+  if (running) {
+    return running;
   }
 
-  const list = [...texts].filter(
-    (text) => text.trim().length > 0,
-  );
-
-  const total = list.length;
-
-  const wait = (ms: number) =>
-    new Promise<void>((resolve) => {
-      window.setTimeout(resolve, ms);
-    });
-
-  let sentRequest = false;
-
-  for (let index = 0; index < total; index++) {
-    const cleanText = list[index]!.trim();
-
-    onProgress?.(index + 1, total);
-
-    // Already saved on the device → never call Gemini again.
-    const saved = await loadAudio(cleanText);
-
-    if (saved) {
-      continue;
-    }
-
-    // One request at a time, 25s apart.
-    if (sentRequest) {
-      await wait(25000);
-    }
-
-    let lastError: unknown = null;
-
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        sentRequest = true;
-
-        await generateAndSaveVoice(cleanText);
-
-        lastError = null;
-        break;
-      } catch (error) {
-        lastError = error;
-
-        const status =
-          error instanceof NarratorRequestError
-            ? error.status
-            : 0;
-
-        if (attempt < 3) {
-          await wait(status === 429 ? 30000 : 25000);
-          continue;
-        }
-      }
-    }
-
-    if (lastError) {
-      const message =
-        lastError instanceof Error
-          ? lastError.message
-          : "تعذّر إنشاء الصوت.";
-
-      throw new Error(
-        `فشل الصوت ${index + 1} من ${total}: ${message}`,
+  const task = (async () => {
+    try {
+      return await requestCharonAudio(cleanText).then(
+        async (samples) => {
+          cache.set(cleanText, samples);
+          await saveAudio(cleanText, samples).catch(() => {});
+          return samples;
+        },
       );
+    } catch {
+      return generateLocalAndSaveVoice(cleanText);
     }
+  })();
+
+  inflight.set(cleanText, task);
+
+  try {
+    return await task;
+  } finally {
+    inflight.delete(cleanText);
   }
 }
-
-/* =========================================================
-   PREPARE ONE VOICE
-   ========================================================= */
 
 export async function prepareVoice(
   text: string,
 ): Promise<boolean> {
-  const cleanText =
-    text.trim();
+  const cleanText = text.trim();
 
   if (!cleanText) {
     return false;
   }
 
   try {
-    await generateAndSaveVoice(
-      cleanText,
-    );
+    await getVoiceSamples(cleanText);
 
     return true;
   } catch {
     return false;
   }
 }
+
 
 /* =========================================================
    LOCAL-ONLY SPEAK
