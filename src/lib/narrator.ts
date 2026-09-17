@@ -768,13 +768,9 @@ export function speak(
   }
 
   /*
-   * LOCAL ONLY.
-   *
-   * NO Gemini.
-   * NO Cloudflare.
-   * NO Internet request.
+   * Saved → Charon → local free voice.
    */
-  loadAudio(
+  getVoiceSamples(
     cleanText,
   )
     .then(
@@ -787,14 +783,7 @@ export function speak(
           return;
         }
 
-        if (!samples) {
-          onError?.(
-            "هذا الصوت غير محفوظ بعد. اضغط «تحميل أصوات Charon» مرة واحدة بالإنترنت.",
-          );
 
-          complete();
-          return;
-        }
 
         if (!samples.length) {
           complete();
