@@ -16,6 +16,7 @@ import {
 } from "@/lib/mafia";
 import {
   initNarrator,
+  prefetchVoices,
   speak,
   stopSpeaking,
 } from "@/lib/narrator";
