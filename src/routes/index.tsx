@@ -147,14 +147,6 @@ function MafiaGame() {
   const [voiceError, setVoiceError] =
     useState<string | null>(null);
 
-  const [packLoading, setPackLoading] =
-    useState(false);
-
-  const [packProgress, setPackProgress] =
-    useState("");
-
-  const [packReady, setPackReady] =
-    useState(false);
 
   const timerRef =
     useRef<number | null>(null);
