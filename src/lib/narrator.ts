@@ -513,12 +513,16 @@ export const SAVED_PLAYER_NAMES = [
 ] as const;
 
 /* =========================================================
-   ON-DEMAND VOICE
+   ON-DEMAND CHARON VOICE
    =========================================================
-   1. saved on device  → play instantly
-   2. Charon (cloud)   → generate + save
-   3. local male voice → free fallback, no credits
+   1. saved on device → play instantly
+   2. Charon (cloud)  → generate, save, play
    ========================================================= */
+
+const wait = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
 
 async function getVoiceSamples(
   text: string,
@@ -538,17 +542,37 @@ async function getVoiceSamples(
   }
 
   const task = (async () => {
-    try {
-      return await requestCharonAudio(cleanText).then(
-        async (samples) => {
-          cache.set(cleanText, samples);
-          await saveAudio(cleanText, samples).catch(() => {});
-          return samples;
-        },
-      );
-    } catch {
-      return generateLocalAndSaveVoice(cleanText);
+    let lastError: unknown = null;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const samples =
+          await requestCharonAudio(cleanText);
+
+        cache.set(cleanText, samples);
+
+        await saveAudio(cleanText, samples).catch(
+          () => {},
+        );
+
+        return samples;
+      } catch (error) {
+        lastError = error;
+
+        if (attempt < 3) {
+          const status =
+            error instanceof NarratorRequestError
+              ? error.status
+              : 0;
+
+          await wait(status === 429 ? 4000 : 1200);
+        }
+      }
     }
+
+    throw lastError instanceof Error
+      ? lastError
+      : new Error("تعذّر إنشاء صوت Charon.");
   })();
 
   inflight.set(cleanText, task);
@@ -577,6 +601,33 @@ export async function prepareVoice(
     return false;
   }
 }
+
+/*
+ * Warms up upcoming phrases in the background so Charon
+ * speaks with no delay when the phase arrives.
+ */
+export function prefetchVoices(texts: string[]) {
+  void (async () => {
+    for (const text of texts) {
+      const cleanText = text.trim();
+
+      if (!cleanText) {
+        continue;
+      }
+
+      if (await loadAudio(cleanText)) {
+        continue;
+      }
+
+      try {
+        await getVoiceSamples(cleanText);
+      } catch {
+        // Ignore — speak() will retry when needed.
+      }
+    }
+  })();
+}
+
 
 
 /* =========================================================
