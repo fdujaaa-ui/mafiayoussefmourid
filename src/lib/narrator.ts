@@ -494,97 +494,9 @@ async function generateAndSaveVoice(
 }
 
 /* =========================================================
-   LOCAL ARABIC MALE VOICE (no quota, no credits)
+   (لا يوجد صوت محلي — Charon فقط)
    ========================================================= */
 
-const LOCAL_VOICE = "ar_JO-kareem-medium";
-
-let localReady: Promise<
-  typeof import("@mintplex-labs/piper-tts-web")
-> | null = null;
-
-async function getLocalEngine() {
-  if (!localReady) {
-    localReady = (async () => {
-      const tts = await import(
-        "@mintplex-labs/piper-tts-web"
-      );
-
-      const stored = (await tts.stored()) as string[];
-
-      if (!stored.includes(LOCAL_VOICE)) {
-        await tts.download(LOCAL_VOICE, () => {});
-      }
-
-      return tts;
-    })();
-  }
-
-  return localReady;
-}
-
-async function blobToSamples(
-  blob: Blob,
-): Promise<Float32Array> {
-  const bytes = await blob.arrayBuffer();
-
-  const decodeCtx =
-    getCtx() ??
-    (null as unknown as AudioContext);
-
-  if (!decodeCtx) {
-    throw new Error("تعذّر تشغيل الصوت المحلي.");
-  }
-
-  const decoded =
-    await decodeCtx.decodeAudioData(bytes.slice(0));
-
-  if (decoded.sampleRate === SAMPLE_RATE) {
-    return decoded.getChannelData(0).slice();
-  }
-
-  const length = Math.ceil(
-    (decoded.length * SAMPLE_RATE) /
-      decoded.sampleRate,
-  );
-
-  const offline = new OfflineAudioContext(
-    1,
-    length,
-    SAMPLE_RATE,
-  );
-
-  const source = offline.createBufferSource();
-
-  source.buffer = decoded;
-  source.connect(offline.destination);
-  source.start();
-
-  const rendered = await offline.startRendering();
-
-  return rendered.getChannelData(0).slice();
-}
-
-async function generateLocalAndSaveVoice(
-  text: string,
-): Promise<Float32Array> {
-  const cleanText = text.trim();
-
-  const tts = await getLocalEngine();
-
-  const blob = await tts.predict({
-    text: cleanText,
-    voiceId: LOCAL_VOICE,
-  });
-
-  const samples = await blobToSamples(blob as Blob);
-
-  cache.set(cleanText, samples);
-
-  await saveAudio(cleanText, samples);
-
-  return samples;
-}
 
 /* =========================================================
    SAVED NAMES
@@ -601,12 +513,16 @@ export const SAVED_PLAYER_NAMES = [
 ] as const;
 
 /* =========================================================
-   ON-DEMAND VOICE
+   ON-DEMAND CHARON VOICE
    =========================================================
-   1. saved on device  → play instantly
-   2. Charon (cloud)   → generate + save
-   3. local male voice → free fallback, no credits
+   1. saved on device → play instantly
+   2. Charon (cloud)  → generate, save, play
    ========================================================= */
+
+const wait = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
 
 async function getVoiceSamples(
   text: string,
@@ -626,17 +542,37 @@ async function getVoiceSamples(
   }
 
   const task = (async () => {
-    try {
-      return await requestCharonAudio(cleanText).then(
-        async (samples) => {
-          cache.set(cleanText, samples);
-          await saveAudio(cleanText, samples).catch(() => {});
-          return samples;
-        },
-      );
-    } catch {
-      return generateLocalAndSaveVoice(cleanText);
+    let lastError: unknown = null;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const samples =
+          await requestCharonAudio(cleanText);
+
+        cache.set(cleanText, samples);
+
+        await saveAudio(cleanText, samples).catch(
+          () => {},
+        );
+
+        return samples;
+      } catch (error) {
+        lastError = error;
+
+        if (attempt < 3) {
+          const status =
+            error instanceof NarratorRequestError
+              ? error.status
+              : 0;
+
+          await wait(status === 429 ? 4000 : 1200);
+        }
+      }
     }
+
+    throw lastError instanceof Error
+      ? lastError
+      : new Error("تعذّر إنشاء صوت Charon.");
   })();
 
   inflight.set(cleanText, task);
@@ -665,6 +601,33 @@ export async function prepareVoice(
     return false;
   }
 }
+
+/*
+ * Warms up upcoming phrases in the background so Charon
+ * speaks with no delay when the phase arrives.
+ */
+export function prefetchVoices(texts: string[]) {
+  void (async () => {
+    for (const text of texts) {
+      const cleanText = text.trim();
+
+      if (!cleanText) {
+        continue;
+      }
+
+      if (await loadAudio(cleanText)) {
+        continue;
+      }
+
+      try {
+        await getVoiceSamples(cleanText);
+      } catch {
+        // Ignore — speak() will retry when needed.
+      }
+    }
+  })();
+}
+
 
 
 /* =========================================================

@@ -16,6 +16,7 @@ import {
 } from "@/lib/mafia";
 import {
   initNarrator,
+  prefetchVoices,
   speak,
   stopSpeaking,
 } from "@/lib/narrator";
@@ -288,9 +289,17 @@ function MafiaGame() {
       [aliveRoles, night],
     );
 
+  /* Warm up the coming phrases so Charon speaks on time. */
+  useEffect(() => {
+    prefetchVoices(
+      nightSteps.map((step) => step.text),
+    );
+  }, [nightSteps]);
+
   /* =========================================================
      SPEAK
      ========================================================= */
+
 
   const say = useCallback(
     (
