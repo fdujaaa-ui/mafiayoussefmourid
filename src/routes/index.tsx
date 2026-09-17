@@ -16,10 +16,10 @@ import {
 } from "@/lib/mafia";
 import {
   initNarrator,
-  prepareVoicePack,
   speak,
   stopSpeaking,
 } from "@/lib/narrator";
+
 
 export const Route = createFileRoute("/")({
   head: () => ({
