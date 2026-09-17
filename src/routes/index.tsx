@@ -221,47 +221,6 @@ function MafiaGame() {
       ),
     );
 
-  /* =========================================================
-     VOICE PACK
-     ========================================================= */
-
-  async function downloadVoicePack() {
-    if (packLoading) {
-      return;
-    }
-
-    setPackLoading(true);
-    setPackReady(false);
-    setVoiceError(null);
-    setPackProgress(
-      "يتم تجهيز أصوات Charon...",
-    );
-
-    try {
-      await prepareVoicePack(
-        (current, total) => {
-          setPackProgress(
-            `جاري تحميل الصوت ${current} من ${total}...`,
-          );
-        },
-      );
-
-      setPackReady(true);
-      setPackProgress(
-        "✅ حزمة أصوات Charon محفوظة على الهاتف",
-      );
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "تعذر إكمال تحميل حزمة الأصوات.";
-
-      setPackProgress(`❌ ${message}`);
-      setVoiceError(message);
-    } finally {
-      setPackLoading(false);
-    }
-  }
 
   /* =========================================================
      NIGHT STEPS
